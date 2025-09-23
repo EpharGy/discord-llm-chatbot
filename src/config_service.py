@@ -62,6 +62,25 @@ class ConfigService:
     def discord_intents(self) -> dict:
         return self._cfg.raw.get("discord", {}).get("intents", {})
 
+    def discord_admin_user_ids(self) -> set[str]:
+        """Return admin user IDs from config as strings.
+
+        Config path: discord.admin_user_ids: ["123", "456"]
+        Accepts strings or numbers; normalizes to strings.
+        """
+        self._maybe_reload()
+        ids = self._cfg.raw.get("discord", {}).get("admin_user_ids", [])
+        out: set[str] = set()
+        if isinstance(ids, (list, tuple)):
+            for v in ids:
+                try:
+                    out.add(str(v))
+                except Exception:
+                    continue
+        elif ids:
+            out.add(str(ids))
+        return out
+
     def discord_message_char_limit(self) -> int:
         self._maybe_reload()
         try:

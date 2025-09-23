@@ -45,3 +45,7 @@ personas/*
 prompts/*
 !prompts/system.txt
 !prompts/context_template.txt
+
+# cogs
+!cogs/*
+/cogs/extra_cogs/*

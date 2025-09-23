@@ -108,7 +108,7 @@ class LoreService:
                     tokens_used = max_tokens
                     if logger:
                         try:
-                            logger.debug(f"lore-include uid={e.uid} title={e.comment or ''} tokens={max_tokens} cumulative={tokens_used} (truncated)")
+                            logger.debug(f"[lore-include] uid={e.uid} title={e.comment or ''} tokens={max_tokens} cumulative={tokens_used} (truncated)")
                         except Exception:
                             pass
                 break
@@ -116,14 +116,14 @@ class LoreService:
             tokens_used += block_tokens
             if logger:
                 try:
-                    logger.debug(f"lore-include uid={e.uid} title={e.comment or ''} tokens={block_tokens} cumulative={tokens_used}")
+                    logger.debug(f"[lore-include] uid={e.uid} title={e.comment or ''} tokens={block_tokens} cumulative={tokens_used}")
                 except Exception:
                     pass
         # If we exited because budget reached and there are more entries remaining, log the limit event
         if len(pieces) > 0 and (tokens_used >= max_tokens) and (len(ordered) > len(pieces)):
             if logger:
                 try:
-                    logger.debug(f"lore-limit-reached tokens_used={tokens_used} budget={max_tokens}")
+                    logger.debug(f"[lore-limit-reached] tokens_used={tokens_used} budget={max_tokens}")
                 except Exception:
                     pass
         if not pieces:

@@ -202,11 +202,11 @@ class MessageRouter:
         # Log final decision with level based on allow
         allow_flag = bool(decision.get('allow'))
         line = (
-            f"decision "
-            f"{fmt('channel', event.get('channel_name', event['channel_id']))} "
-            f"{fmt('user', event.get('author_name'))} "
+            f"[Decision] "
             f"{fmt('allow', allow_flag)} "
             f"{fmt('reason', decision.get('reason'))} "
+            f"{fmt('channel', event.get('channel_name', event['channel_id']))} "
+            f"{fmt('user', event.get('author_name'))} "
             f"{fmt('style', decision.get('style', 'normal'))} "
             f"{fmt('msg', getattr(message, 'id', ''))} "
             f"{fmt('correlation', correlation_id)}"
@@ -462,7 +462,7 @@ class MessageRouter:
         tokens_after = self.tok.estimate_tokens_messages(messages_for_est)
         try:
             self.log.debug(
-                f"tokenizer-summary {fmt('channel', event.get('channel_name', event['channel_id']))} "
+                f"[tokenizer-summary] {fmt('channel', event.get('channel_name', event['channel_id']))} "
                 f"{fmt('user', event.get('author_name'))} {fmt('tokens_before', tokens_before)} {fmt('tokens_after', tokens_after)} "
                 f"{fmt('history_before', len(recent))} {fmt('history_after', len(history))} {fmt('budget', prompt_budget)} {fmt('correlation', correlation_id)}"
             )
@@ -481,7 +481,7 @@ class MessageRouter:
             if not models_to_try:
                 try:
                     self.log.error(
-                        f"llm-no-models-configured {fmt('channel', event.get('channel_name', event['channel_id']))} "
+                        f"[llm-no-models-configured] {fmt('channel', event.get('channel_name', event['channel_id']))} "
                         f"{fmt('user', event.get('author_name'))} {fmt('correlation', correlation_id)}"
                     )
                 except Exception:
@@ -497,7 +497,7 @@ class MessageRouter:
                 try:
                     start_ts = datetime.now(timezone.utc)
                     self.log.info(
-                        f"llm-start "
+                        f"[llm-start] "
                         f"{fmt('channel', event.get('channel_name', event['channel_id']))} "
                         f"{fmt('user', event.get('author_name'))} "
                         f"{fmt('model', model_name)} "
@@ -558,14 +558,14 @@ class MessageRouter:
                     try:
                         if not isinstance(reply, str):
                             self.log.error(
-                                f"llm-bad-response-type {fmt('channel', event.get('channel_name', event['channel_id']))} "
+                                f"[llm-bad-response-type] {fmt('channel', event.get('channel_name', event['channel_id']))} "
                                 f"{fmt('user', event.get('author_name'))} {fmt('model', model_name)} "
                                 f"{fmt('type', type(reply).__name__)} {fmt('correlation', correlation_id)}"
                             )
                             reply = ""
                         elif reply.strip() == "":
                             self.log.error(
-                                f"llm-empty-response {fmt('channel', event.get('channel_name', event['channel_id']))} "
+                                f"[llm-empty-response] {fmt('channel', event.get('channel_name', event['channel_id']))} "
                                 f"{fmt('user', event.get('author_name'))} {fmt('model', model_name)} "
                                 f"{fmt('correlation', correlation_id)}"
                             )
@@ -575,7 +575,7 @@ class MessageRouter:
                     usage = (result or {}).get("usage") if isinstance(result, dict) else None
                     if usage and (usage.get("input_tokens") is not None or usage.get("output_tokens") is not None):
                         self.log.info(
-                            f"llm-finish "
+                            f"[llm-finish] "
                             f"{fmt('channel', event.get('channel_name', event['channel_id']))} "
                             f"{fmt('user', event.get('author_name'))} "
                             f"{fmt('model', model_name)} "
@@ -588,7 +588,7 @@ class MessageRouter:
                         )
                     else:
                         self.log.info(
-                            f"llm-finish "
+                            f"[llm-finish] "
                             f"{fmt('channel', event.get('channel_name', event['channel_id']))} "
                             f"{fmt('user', event.get('author_name'))} "
                             f"{fmt('model', model_name)} "
@@ -601,11 +601,11 @@ class MessageRouter:
                         from .logger_factory import is_full_enabled
                         if is_full_enabled():
                             self.log.info(
-                                f"payload-in user_msg={user_msg['content'][:500]} history_count={len(history)} correlation={correlation_id}"
+                                f"[payload-in] user_msg={user_msg['content'][:500]} history_count={len(history)} correlation={correlation_id}"
                             )
                             if reply:
                                 self.log.info(
-                                    f"payload-out reply={reply[:1000]} correlation={correlation_id}"
+                                    f"[payload-out] reply={reply[:1000]} correlation={correlation_id}"
                                 )
                     except Exception:
                         pass
@@ -616,7 +616,7 @@ class MessageRouter:
                     # Explicit marker that this model is exhausted before moving to next fallback
                     try:
                         self.log.error(
-                            f"llm-model-exhausted {fmt('model', model_name)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}"
+                            f"[llm-model-exhausted] {fmt('model', model_name)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}"
                         )
                     except Exception:
                         pass
@@ -626,12 +626,12 @@ class MessageRouter:
                     # Note: all configured models failed; escalate to auto fallback
                     try:
                         self.log.error(
-                            f"llm-fallback-start {fmt('model', 'openrouter/auto')} {fmt('correlation', correlation_id)}"
+                            f"[llm-fallback-start] {fmt('model', 'openrouter/auto')} {fmt('correlation', correlation_id)}"
                         )
                     except Exception:
                         pass
                     self.log.info(
-                        f"llm-autofallback "
+                        f"[llm-autofallback] "
                         f"{fmt('channel', event.get('channel_name', event['channel_id']))} "
                         f"{fmt('user', event.get('author_name'))} "
                         f"{fmt('correlation', correlation_id)}"
@@ -666,14 +666,14 @@ class MessageRouter:
                     try:
                         if not isinstance(reply, str):
                             self.log.error(
-                                f"llm-bad-response-type {fmt('channel', event.get('channel_name', event['channel_id']))} "
+                                f"[llm-bad-response-type] {fmt('channel', event.get('channel_name', event['channel_id']))} "
                                 f"{fmt('user', event.get('author_name'))} {fmt('model', 'openrouter/auto')} "
                                 f"{fmt('type', type(reply).__name__)} {fmt('correlation', correlation_id)}"
                             )
                             reply = ""
                         elif reply.strip() == "":
                             self.log.error(
-                                f"llm-empty-response {fmt('channel', event.get('channel_name', event['channel_id']))} "
+                                f"[llm-empty-response] {fmt('channel', event.get('channel_name', event['channel_id']))} "
                                 f"{fmt('user', event.get('author_name'))} {fmt('model', 'openrouter/auto')} "
                                 f"{fmt('correlation', correlation_id)}"
                             )
@@ -683,7 +683,7 @@ class MessageRouter:
                     usage = (result or {}).get("usage") if isinstance(result, dict) else None
                     if usage and (usage.get("input_tokens") is not None or usage.get("output_tokens") is not None):
                         self.log.info(
-                            f"llm-finish "
+                            f"[llm-finish] "
                             f"{fmt('channel', event.get('channel_name', event['channel_id']))} "
                             f"{fmt('user', event.get('author_name'))} "
                             f"{fmt('model', 'openrouter/auto')} "
@@ -695,7 +695,7 @@ class MessageRouter:
                         )
                     else:
                         self.log.info(
-                            f"llm-finish "
+                            f"[llm-finish] "
                             f"{fmt('channel', event.get('channel_name', event['channel_id']))} "
                             f"{fmt('user', event.get('author_name'))} "
                             f"{fmt('model', 'openrouter/auto')} "
@@ -708,7 +708,7 @@ class MessageRouter:
             # Log as error before substituting a placeholder so it is captured in errors.log
             try:
                 self.log.error(
-                    f"llm-no-reply {fmt('channel', event.get('channel_name', event['channel_id']))} "
+                    f"[llm-no-reply] {fmt('channel', event.get('channel_name', event['channel_id']))} "
                     f"{fmt('user', event.get('author_name'))} {fmt('correlation', correlation_id)}"
                 )
             except Exception:
@@ -795,7 +795,7 @@ class MessageRouter:
                         max_messages=int(cm.get("max_messages", 5)),
                     )
                     self.log.info(
-                        f"conversation-mode start channel={event.get('channel_name', event['channel_id'])} "
+                        f"[conversation-mode] [start] channel={event.get('channel_name', event['channel_id'])} "
                         f"window_seconds={int(cm.get('window_seconds', 120))} max_messages={int(cm.get('max_messages', 5))} correlation={correlation_id}"
                     )
         except Exception:
@@ -987,7 +987,7 @@ class MessageRouter:
             try:
                 tokens_after = self.tok.estimate_tokens_messages(messages_for_est)
                 self.log.debug(
-                    f"tokenizer-summary {fmt('channel', cid)} {fmt('user', 'batch')} "
+                    f"[tokenizer-summary] {fmt('channel', cid)} {fmt('user', 'batch')} "
                     f"{fmt('tokens_before', tokens_before)} {fmt('tokens_after', tokens_after)} {fmt('budget', prompt_budget)}"
                 )
             except Exception:
@@ -1009,7 +1009,7 @@ class MessageRouter:
                 try:
                     start_ts = datetime.now(timezone.utc)
                     self.log.info(
-                        f"llm-start {fmt('channel', cid)} {fmt('user', 'batch')} {fmt('model', model_name)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}"
+                        f"[llm-start] {fmt('channel', cid)} {fmt('user', 'batch')} {fmt('model', model_name)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}"
                     )
                     result = await self.llm.generate_chat(
                         messages_for_est,
@@ -1049,30 +1049,30 @@ class MessageRouter:
                     usage = (result or {}).get("usage") if isinstance(result, dict) else None
                     if usage and (usage.get("input_tokens") is not None or usage.get("output_tokens") is not None):
                         self.log.info(
-                            f"llm-finish {fmt('channel', cid)} {fmt('user', 'batch')} {fmt('model', model_name)} {fmt('duration_ms', dur_ms)} "
+                            f"[llm-finish] {fmt('channel', cid)} {fmt('user', 'batch')} {fmt('model', model_name)} {fmt('duration_ms', dur_ms)} "
                             f"{fmt('tokens_in', usage.get('input_tokens','NA'))} {fmt('tokens_out', usage.get('output_tokens','NA'))} {fmt('total_tokens', usage.get('total_tokens','NA'))} "
                             f"{fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}"
                         )
                     else:
                         self.log.info(
-                            f"llm-finish {fmt('channel', cid)} {fmt('user', 'batch')} {fmt('model', model_name)} {fmt('duration_ms', dur_ms)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}"
+                            f"[llm-finish] {fmt('channel', cid)} {fmt('user', 'batch')} {fmt('model', model_name)} {fmt('duration_ms', dur_ms)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}"
                         )
                     break
                 except Exception as e:
                     self.log.error(f"LLM error with {model_name}: {e}")
                     reply = None
                     try:
-                        self.log.error(f"llm-model-exhausted {fmt('model', model_name)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
+                        self.log.error(f"[llm-model-exhausted] {fmt('model', model_name)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
                     except Exception:
                         pass
 
             if reply is None and allow_auto:
                 try:
                     try:
-                        self.log.error(f"llm-fallback-start {fmt('model', 'openrouter/auto')} {fmt('correlation', correlation_id)}")
+                        self.log.error(f"[llm-fallback-start] {fmt('model', 'openrouter/auto')} {fmt('correlation', correlation_id)}")
                     except Exception:
                         pass
-                    self.log.info(f"llm-autofallback {fmt('channel', cid)} {fmt('user', 'batch')} {fmt('correlation', correlation_id)}")
+                    self.log.info(f"[llm-autofallback] {fmt('channel', cid)} {fmt('user', 'batch')} {fmt('correlation', correlation_id)}")
                     start_ts = datetime.now(timezone.utc)
                     result = await self.llm.generate_chat(
                         messages_for_est,
@@ -1088,13 +1088,13 @@ class MessageRouter:
                     usage = (result or {}).get("usage") if isinstance(result, dict) else None
                     if usage and (usage.get("input_tokens") is not None or usage.get("output_tokens") is not None):
                         self.log.info(
-                            f"llm-finish {fmt('channel', cid)} {fmt('user', 'batch')} {fmt('model', 'openrouter/auto')} {fmt('duration_ms', dur_ms)} "
+                            f"[llm-finish]{fmt('channel', cid)} {fmt('user', 'batch')} {fmt('model', 'openrouter/auto')} {fmt('duration_ms', dur_ms)} "
                             f"{fmt('tokens_in', usage.get('input_tokens','NA'))} {fmt('tokens_out', usage.get('output_tokens','NA'))} {fmt('total_tokens', usage.get('total_tokens','NA'))} "
                             f"{fmt('correlation', correlation_id)}"
                         )
                     else:
                         self.log.info(
-                            f"llm-finish {fmt('channel', cid)} {fmt('user', 'batch')} {fmt('model', 'openrouter/auto')} {fmt('duration_ms', dur_ms)} {fmt('correlation', correlation_id)}"
+                            f"[llm-finish] {fmt('channel', cid)} {fmt('user', 'batch')} {fmt('model', 'openrouter/auto')} {fmt('duration_ms', dur_ms)} {fmt('correlation', correlation_id)}"
                         )
                 except Exception as e2:
                     self.log.error(f"LLM auto fallback error: {e2}")

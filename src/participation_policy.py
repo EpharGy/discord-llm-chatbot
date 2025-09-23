@@ -87,10 +87,10 @@ class ParticipationPolicy:
             msg = event.get("message_id", "")
             corr = event.get("correlation", "")
             line = (
-                f"decision "
+                f"[Decision] "
+                f"{fmt('allow', bool(allow))} "
                 f"{fmt('channel', channel)} "
                 f"{fmt('user', user)} "
-                f"{fmt('allow', bool(allow))} "
                 f"{fmt('reason', reason)} "
                 f"{fmt('style', style or 'normal')} "
                 f"{fmt('msg', msg)} "

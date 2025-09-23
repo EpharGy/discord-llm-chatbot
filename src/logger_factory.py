@@ -53,9 +53,9 @@ def configure_logging(level: Optional[str] = None, tz: Optional[str] = None, fmt
 
     if fmt == "json":
         # Simple JSON-like output (without extra deps); keep it minimal
-        pattern = "%(asctime)s %(levelname)s %(name)s %(message)s"
+        pattern = "%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
     else:
-        pattern = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
+        pattern = "%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
 
     handler = logging.StreamHandler()
     handler.setLevel(py_level)
@@ -105,3 +105,36 @@ def get_logger(name: str) -> logging.Logger:
 
 def is_full_enabled() -> bool:
     return _FULL_ENABLED
+
+
+def set_log_levels(level: Optional[str] = None, lib_log_level: Optional[str] = None) -> None:
+    """Dynamically adjust root and library logger levels without reinitializing handlers.
+
+    - level: "INFO" | "DEBUG" | "FULL" (FULL behaves like DEBUG but flips the internal flag)
+    - lib_log_level: applies to known noisy libraries (discord/httpx/httpcore)
+    """
+    global _FULL_ENABLED
+    lvl = (level or "INFO").upper()
+    if lvl not in ("INFO", "DEBUG", "FULL"):
+        lvl = "INFO"
+    py_level = logging.DEBUG if lvl in ("DEBUG", "FULL") else logging.INFO
+    _FULL_ENABLED = (lvl == "FULL")
+
+    root = logging.getLogger()
+    root.setLevel(py_level)
+    for h in root.handlers:
+        try:
+            h.setLevel(py_level)
+        except Exception:
+            pass
+
+    if lib_log_level:
+        lib_level = getattr(logging, lib_log_level.upper(), logging.WARNING)
+    else:
+        lib_level = None
+    if lib_level is not None:
+        for name in ("discord", "discord.http", "discord.gateway", "discord.client", "httpx", "httpcore"):
+            try:
+                logging.getLogger(name).setLevel(lib_level)
+            except Exception:
+                pass
