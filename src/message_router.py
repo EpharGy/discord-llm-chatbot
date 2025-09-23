@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta as _timedelta
 from pathlib import Path
 from datetime import datetime as dt
-from typing import Any
 import io
 from .task_queue import PendingMention
 import discord
@@ -162,7 +161,7 @@ class MessageRouter:
             pass
         decision = self.policy.should_reply(event, self.memory)
         # Conversation mode: if a window is active in this channel, auto-allow up to a message budget
-        conv_cfg = getattr(self.policy, "conversation_mode", None)
+        _conv_cfg = getattr(self.policy, "conversation_mode", None)
         if decision.get("allow") is False and getattr(self.memory, "conversation_mode_active", None):
             if self.memory.conversation_mode_active(event["channel_id"]):
                 cm = getattr(self.policy, "conversation_mode", {})
@@ -224,7 +223,7 @@ class MessageRouter:
                     # Try to delete after a few seconds
                     # Note: Discord has rate limits; ignoring failures here
                     await warn.delete(delay=getattr(self.policy, "warning_ttl_seconds", 5))
-                except Exception:  # noqa: PIE786
+                except Exception:
                     pass
             else:
                 self.log.debug(f"Not replying: {decision.get('reason')}")
@@ -262,14 +261,7 @@ class MessageRouter:
             recent = recent[-max_msgs:]
         else:
             recent = self.memory.get_recent(event["channel_id"], limit=self.policy.window_size())
-        messages = [
-            ChatMessage(
-                role="user",
-                content=event["content"],
-                author=event["author_name"],
-                timestamp_iso=event["created_at"].isoformat(),
-            )
-        ]
+        # Note: Chat messages are constructed directly below using system/history/user blocks.
 
         # Prepare chat messages for LLM
         system_msg = {"role": "system", "content": self.tmpl.build_system_message()}
@@ -592,7 +584,7 @@ class MessageRouter:
                     except Exception:
                         pass
                     break
-                except Exception as e:  # noqa: PIE786
+                except Exception as e:
                     self.log.error(f"LLM error with {model_name}: {e}")
                     reply = None
                     # Explicit marker that this model is exhausted before moving to next fallback
@@ -684,7 +676,7 @@ class MessageRouter:
                             f"{fmt('duration_ms', dur_ms)} "
                             f"{fmt('correlation', correlation_id)}"
                         )
-                except Exception as e2:  # noqa: PIE786
+                except Exception as e2:
                     self.log.error(f"LLM auto fallback error: {e2}")
         if not reply:
             # Log as error before substituting a placeholder so it is captured in errors.log

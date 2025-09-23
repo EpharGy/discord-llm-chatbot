@@ -11,7 +11,7 @@ from .prompt_template_engine import PromptTemplateEngine
 from .tokenizer_service import TokenizerService
 from .conversation_memory import ConversationMemory
 from .participation_policy import ParticipationPolicy
-from .task_queue import MentionsQueue, PendingMention
+from .task_queue import MentionsQueue
 from .llm.openrouter_client import OpenRouterClient
 from .conversation_batcher import ConversationBatcher
 from .lore_service import LoreService
@@ -118,7 +118,6 @@ async def main() -> None:
 
     try:
         async def process_batches_loop():
-            import datetime
             while True:
                 batch_interval = 10
                 batch_limit = 10

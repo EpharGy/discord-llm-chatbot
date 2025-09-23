@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import random
 from .logger_factory import get_logger
 from .utils.logfmt import fmt

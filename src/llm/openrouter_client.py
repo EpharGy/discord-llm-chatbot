@@ -138,7 +138,7 @@ class OpenRouterClient(LLMClient):
                 raise RuntimeError(f"OpenRouter retries exhausted: {last_exc}") from last_exc
             try:
                 text = data["choices"][0]["message"]["content"].strip()
-            except Exception as e:  # noqa: PIE786
+            except Exception as e:
                 raise RuntimeError(f"OpenRouter response parse error: {data}") from e
             usage = data.get("usage") or {}
             # Normalize usage fields if present
