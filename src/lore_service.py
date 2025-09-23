@@ -81,7 +81,7 @@ class LoreService:
             # For non-constant entries, include only if a key matches
             try:
                 keys = e.keys or []
-                if any((str(k) or "").lower() in text_lower for k in keys):
+                if any(self._key_matches(text_lower, str(k)) for k in keys):
                     (matched_md if e.source == "md" else matched_json).append(e)
             except Exception:
                 pass
@@ -129,3 +129,29 @@ class LoreService:
         if not pieces:
             return None
         return "[Lore]\n" + "".join(pieces)
+
+    @staticmethod
+    def _key_matches(text_lower: str, key: str) -> bool:
+        """Return True if key matches the text as a whole token/phrase.
+
+        Rules:
+        - For Latin/ASCII keys (letters/digits/space/punct), require word boundaries
+          around the full key (e.g., 'Ai' doesn't match 'main'). Multi-word phrases
+          allow flexible whitespace.
+        - For CJK keys, fall back to substring match (common segmentation rules differ).
+        """
+        try:
+            k = (key or "").strip()
+            if not k:
+                return False
+            k_lower = k.lower()
+            # CJK ranges: Hiragana, Katakana, CJK Unified, Halfwidth Katakana
+            if re.search(r"[\u3040-\u30ff\u3400-\u9fff\uff66-\uff9d]", k_lower):
+                return k_lower in text_lower
+            # Build a word-boundary regex for Latin keys with exact literal spacing
+            escaped = re.escape(k_lower)
+            pattern = rf"\b{escaped}\b"
+            return re.search(pattern, text_lower, flags=re.IGNORECASE) is not None
+        except Exception:
+            # On regex error, fall back to conservative equality check
+            return False
