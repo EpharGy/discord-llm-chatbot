@@ -3,7 +3,6 @@ from __future__ import annotations
 from jinja2 import Environment, BaseLoader
 from pathlib import Path
 from .persona_service import PersonaService
-from .config_service import ConfigService
 
 
 class PromptTemplateEngine:
