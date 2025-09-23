@@ -29,13 +29,13 @@ Thanks for your interest in contributing! This project welcomes PRs.
 
 ## Lint & format
 
-- We use Ruff for linting/formatting in CI. You can install locally:
+- Lint/format run in CI using Ruff. You can run locally if you like:
 
-  ```powershell
-  pip install ruff ruff-lsp
-  ruff check .
-  ruff format .
-  ```
+   ```powershell
+   pip install ruff
+   ruff check .
+   ruff format .
+   ```
 
 ## Tests
 
