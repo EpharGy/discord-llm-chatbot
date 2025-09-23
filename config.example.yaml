@@ -107,3 +107,5 @@ discord:
     presences: false
     message_char_limit: 2000  # Discords's limit is 2000 characters
     max_response_messages: 2  # how many messages to split a long response into (1 = no splitting)
+    admin_user_ids: # Discord user IDs to class as admin (ie can run / admin commands)
+    - "123456789012345678"
