@@ -25,7 +25,12 @@ class DiscordClientAdapter(commands.Bot):
         # Load cogs from cogs/ and cogs/extra_cogs/
         found_cogs = 0
         loaded_cogs = 0
-        for base in (Path("src/cogs"), Path("src/cogs/extra_cogs")):
+        # Only load cogs from root-level cogs/ and cogs/extra_cogs/
+        search_paths = (
+            Path("cogs"),
+            Path("cogs/extra_cogs"),
+        )
+        for base in search_paths:
             if not base.exists():
                 continue
             # Discover python modules in the directory
@@ -34,7 +39,11 @@ class DiscordClientAdapter(commands.Bot):
                 if name.startswith("_"):
                     continue
                 found_cogs += 1
-                mod_path = f"src.cogs.{name}" if base.name == "cogs" else f"src.cogs.extra_cogs.{name}"
+                # Use a consistent module name namespace for clarity in logs
+                if str(base).endswith("extra_cogs"):
+                    mod_path = f"cogs.extra_cogs.{name}"
+                else:
+                    mod_path = f"cogs.{name}"
                 try:
                     spec = importlib.util.spec_from_file_location(mod_path, str(base / f"{name}.py"))
                     if spec and spec.loader:
