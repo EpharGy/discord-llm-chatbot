@@ -192,3 +192,60 @@ class ConfigService:
     def conversation_batch_limit(self) -> int:
         self._maybe_reload()
         return int(self.participation().get("conversation_mode", {}).get("batch_limit", 10))
+
+    # Vision (multimodal) configuration
+    def vision(self) -> dict:
+        self._maybe_reload()
+        return self._cfg.raw.get("vision", {})
+
+    def vision_enabled(self) -> bool:
+        v = self.vision()
+        return bool(v.get("enabled", False))
+
+    def vision_max_images(self) -> int:
+        v = self.vision()
+        try:
+            return int(v.get("max_images", 4))
+        except Exception:
+            return 4
+
+    def vision_models(self) -> list[str]:
+        v = self.vision()
+        ms = v.get("models", [])
+        if isinstance(ms, str):
+            return [ms]
+        return [str(m) for m in (ms or [])]
+
+    def vision_mode(self) -> str:
+        v = self.vision()
+        m = str(v.get("mode", "single-pass")).lower()
+        return "two-pass" if m == "two-pass" else "single-pass"
+
+    def vision_retry_on_count_error(self) -> bool:
+        v = self.vision()
+        return bool(v.get("retry_on_image_count_error", True))
+
+    def vision_fallback_to_text(self) -> bool:
+        v = self.vision()
+        return bool(v.get("fallback_to_text", True))
+
+    def vision_apply_in(self) -> dict:
+        v = self.vision()
+        apply = v.get("apply_in", {}) or {}
+        return {
+            "mentions": bool(apply.get("mentions", True)),
+            "replies": bool(apply.get("replies", True)),
+            "general_chat": bool(apply.get("general_chat", False)),
+            "batch": bool(apply.get("batch", False)),
+        }
+
+    def vision_log_image_urls(self) -> bool:
+        v = self.vision()
+        return bool(v.get("log_image_urls", False))
+
+    def vision_timeout_multiplier(self) -> float:
+        v = self.vision()
+        try:
+            return float(v.get("timeout_multiplier", 1.5))
+        except Exception:
+            return 1.5

@@ -13,10 +13,33 @@ class TokenizerService:
             return 0
         return max(1, int(len(text) / self.chars_per_token))
 
+    def _estimate_content_tokens(self, content) -> int:
+        # content may be str or a list of parts (OpenAI-style multimodal)
+        if content is None:
+            return 0
+        if isinstance(content, str):
+            return self.estimate_tokens_text(content)
+        # list of parts: {type: "text"|"image_url"|..., ...}
+        try:
+            total = 0
+            for part in content:
+                ptype = str(part.get("type", "")).lower()
+                if ptype == "text":
+                    total += self.estimate_tokens_text(str(part.get("text", "")))
+                elif ptype == "image_url":
+                    # Assign a small fixed heuristic per image to represent prompt overhead
+                    total += 64
+                else:
+                    # Unknown part type: negligible
+                    total += 0
+            return total
+        except Exception:
+            return self.estimate_tokens_text(str(content))
+
     def estimate_tokens_messages(self, messages: List[Dict]) -> int:
         total = 0
         for m in messages:
-            total += self.estimate_tokens_text(str(m.get("content", "")))
+            total += self._estimate_content_tokens(m.get("content", ""))
         return total
 
     def truncate_text_tokens(self, text: str, max_tokens: int) -> str:

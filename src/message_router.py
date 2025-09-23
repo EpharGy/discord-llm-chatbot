@@ -433,8 +433,64 @@ class MessageRouter:
             system_ctx = {"role": "system", "content": context_block}
             messages_for_est.append(system_ctx)
 
+        # Vision single-pass: if enabled, scope allows, and images present, convert user content to multimodal parts
+        has_images = False
+        image_urls: list[str] = []
+        vcfg = None
+        user_content = user_msg["content"]  # may become a multimodal parts list
+        try:
+            from .config_service import ConfigService as _Cfg
+            vcfg = _Cfg("config.yaml")
+            if vcfg.vision_enabled():
+                # Determine scope class for gating
+                content_lower = (event.get("content") or "").lower()
+                name_matched = any(a in content_lower for a in getattr(self.policy, "aliases", [])) if getattr(self.policy, "respond_to_name", False) else False
+                if event.get("is_reply_to_bot"):
+                    scope_class = "replies"
+                elif event.get("is_mentioned") or name_matched:
+                    scope_class = "mentions"
+                else:
+                    scope_class = "general_chat"
+                apply = vcfg.vision_apply_in()
+                if bool(apply.get(scope_class, False)):
+                    try:
+                        from .vision_utils import extract_image_urls
+                        urls = extract_image_urls(message)
+                        # Also inspect the referenced (parent) message for images when replying
+                        try:
+                            ref = getattr(message, "reference", None)
+                            if ref and getattr(ref, "resolved", None):
+                                parent = ref.resolved
+                                if parent:
+                                    urls_parent = extract_image_urls(parent)
+                                    if urls_parent:
+                                        urls.extend(u for u in urls_parent if u not in urls)
+                        except Exception:
+                            pass
+                        try:
+                            self.log.debug(
+                                f"[vision-detect] {fmt('scope', scope_class)} {fmt('found', len(urls))}"
+                            )
+                        except Exception:
+                            pass
+                    except Exception:
+                        urls = []
+                    if urls:
+                        max_imgs = int(vcfg.vision_max_images())
+                        image_urls = urls[:max_imgs]
+                        # Build content parts: first text, then images (use append to avoid narrow type inference)
+                        parts = []
+                        parts.append({"type": "text", "text": user_msg["content"]})
+                        for u in image_urls:
+                            parts.append({"type": "image_url", "image_url": {"url": u}})
+                        user_content = parts
+                        has_images = True
+        except Exception:
+            pass
+
         # Now append history tail and user
-        messages_for_est.extend([*history, user_msg])
+        final_user_msg = {"role": "user", "content": user_content}
+        messages_for_est.extend([*history, final_user_msg])
         tokens_before = self.tok.estimate_tokens_messages(messages_for_est)
         # If over budget, trim history from oldest while keeping parent-bot message if present
         if tokens_before > prompt_budget and history:
@@ -491,20 +547,32 @@ class MessageRouter:
                 allow_auto = bool(self.model_cfg.get("allow_auto_fallback", False))
             stops = self.model_cfg.get("stop")
 
+            # Prefer vision-capable models when sending images
+            try:
+                if has_images and vcfg and vcfg.vision_models():
+                    vmods = [str(m) for m in vcfg.vision_models() if str(m).strip()]
+                    if vmods:
+                        models_to_try = vmods
+            except Exception:
+                pass
+
             for idx, model_name in enumerate(models_to_try):
                 if not model_name:
                     continue
                 try:
                     start_ts = datetime.now(timezone.utc)
-                    self.log.info(
+                    line = (
                         f"[llm-start] "
                         f"{fmt('channel', event.get('channel_name', event['channel_id']))} "
                         f"{fmt('user', event.get('author_name'))} "
                         f"{fmt('model', model_name)} "
+                        f"{fmt('has_images', has_images)} "
+                        + (f" {fmt('image_count', len(image_urls))}" if has_images else "") + " "
                         f"{fmt('fallback_index', idx)} "
                         f"{fmt('msg', getattr(message, 'id', ''))} "
                         f"{fmt('correlation', correlation_id)}"
                     )
+                    self.log.info(line)
                     result = await self.llm.generate_chat(
                         messages_for_est,
                         max_tokens=self.model_cfg.get("max_tokens"),
@@ -580,6 +648,8 @@ class MessageRouter:
                             f"{fmt('user', event.get('author_name'))} "
                             f"{fmt('model', model_name)} "
                             f"{fmt('duration_ms', dur_ms)} "
+                            f"{fmt('has_images', has_images)} "
+                            + (f" {fmt('image_count', len(image_urls))}" if has_images else "") + " "
                             f"{fmt('tokens_in', usage.get('input_tokens','NA'))} "
                             f"{fmt('tokens_out', usage.get('output_tokens','NA'))} "
                             f"{fmt('total_tokens', usage.get('total_tokens','NA'))} "
@@ -593,6 +663,8 @@ class MessageRouter:
                             f"{fmt('user', event.get('author_name'))} "
                             f"{fmt('model', model_name)} "
                             f"{fmt('duration_ms', dur_ms)} "
+                            f"{fmt('has_images', has_images)} "
+                            + (f" {fmt('image_count', len(image_urls))}" if has_images else "") + " "
                             f"{fmt('fallback_index', idx)} "
                             f"{fmt('correlation', correlation_id)}"
                         )
@@ -600,8 +672,13 @@ class MessageRouter:
                     try:
                         from .logger_factory import is_full_enabled
                         if is_full_enabled():
+                            # Safe stringification; content may be multimodal parts
+                            try:
+                                preview = str(final_user_msg['content'])
+                            except Exception:
+                                preview = "<unprintable>"
                             self.log.info(
-                                f"[payload-in] user_msg={user_msg['content'][:500]} history_count={len(history)} correlation={correlation_id}"
+                                f"[payload-in] user_msg={preview[:500]} history_count={len(history)} correlation={correlation_id}"
                             )
                             if reply:
                                 self.log.info(
@@ -688,6 +765,8 @@ class MessageRouter:
                             f"{fmt('user', event.get('author_name'))} "
                             f"{fmt('model', 'openrouter/auto')} "
                             f"{fmt('duration_ms', dur_ms)} "
+                            f"{fmt('has_images', has_images)} "
+                            f"{fmt('image_count', len(image_urls) if has_images else 0)} "
                             f"{fmt('tokens_in', usage.get('input_tokens','NA'))} "
                             f"{fmt('tokens_out', usage.get('output_tokens','NA'))} "
                             f"{fmt('total_tokens', usage.get('total_tokens','NA'))} "
@@ -700,6 +779,8 @@ class MessageRouter:
                             f"{fmt('user', event.get('author_name'))} "
                             f"{fmt('model', 'openrouter/auto')} "
                             f"{fmt('duration_ms', dur_ms)} "
+                            f"{fmt('has_images', has_images)} "
+                            f"{fmt('image_count', len(image_urls) if has_images else 0)} "
                             f"{fmt('correlation', correlation_id)}"
                         )
                 except Exception as e2:

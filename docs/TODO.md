@@ -90,7 +90,6 @@ Acceptance Criteria:
 
 ## 3) Observability Add-ons (Optional)
 
-- [ ] Runtime toggle to set log level (e.g., command or env hot-reload).
 - [ ] Capture token usage per reply in logs and/or metrics.
 - [ ] Batch dedupe improvements: track seen message IDs across batch intervals.
 
