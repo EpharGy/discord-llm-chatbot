@@ -159,6 +159,17 @@ class MessageRouter:
                 return
         except Exception:
             pass
+        # Hot-apply dynamic aliases from config to policy before deciding
+        try:
+            from .config_service import ConfigService
+            cfg = ConfigService("config.yaml")
+            part = cfg.participation()
+            if "name_aliases" in part:
+                # Normalize to lower-case set
+                self.policy.aliases = set(a.lower() for a in part.get("name_aliases", []) if isinstance(a, str))
+        except Exception:
+            pass
+
         decision = self.policy.should_reply(event, self.memory)
         # Conversation mode: if a window is active in this channel, auto-allow up to a message budget
         _conv_cfg = getattr(self.policy, "conversation_mode", None)
@@ -383,7 +394,22 @@ class MessageRouter:
         messages_for_est = [system_msg]
 
         # Lore injection: build corpus from the entire visible context (structured + user), and insert lore right after system
-        builder = getattr(self.lore, "build_lore_block", None) if getattr(self, "lore", None) is not None else None
+        # Hot-apply lore path changes from config (rebuild LoreService if paths changed)
+        builder = None
+        try:
+            if getattr(self, "lore", None) is not None:
+                from .config_service import ConfigService
+                cfg = ConfigService("config.yaml")
+                new_paths = cfg.lore_paths()
+                # Compare lists as strings for stability
+                current_paths = getattr(self, "_lore_paths", None)
+                if current_paths is None or [str(p) for p in new_paths] != [str(p) for p in (current_paths or [])]:
+                    from .lore_service import LoreService as _Lore
+                    self.lore = _Lore(new_paths, md_priority=cfg.lore_md_priority()) if cfg.lore_enabled() else None
+                    self._lore_paths = list(new_paths)
+                builder = getattr(self.lore, "build_lore_block", None) if self.lore is not None else None
+        except Exception:
+            builder = getattr(self.lore, "build_lore_block", None) if getattr(self, "lore", None) is not None else None
         if builder and self.lore_cfg.get("enabled"):
             lore_fraction = float(self.lore_cfg.get("max_fraction", 0.33))
             lore_budget = max(1, int(prompt_budget * lore_fraction))
@@ -783,7 +809,7 @@ class MessageRouter:
             "author_name": (getattr(getattr(sent, 'author', None), 'display_name', 'bot') if sent else 'bot'),
         })
 
-    async def build_batch_reply(self, cid: str, events: list[dict]) -> str | None:
+    async def build_batch_reply(self, cid: str, events: list[dict], allow_outside_window: bool = False) -> str | None:
         # Produce a single summarized reply for a batch of events; does NOT send it.
         if not events:
             return None
@@ -791,9 +817,10 @@ class MessageRouter:
             return None
         try:
             channel_id = cid
-            # Consume one conversation message budget up front; if not possible, skip
-            if not self.memory.consume_conversation_message(channel_id):
-                return None
+            # Consume one conversation message budget up front; if not possible and not a final flush, skip
+            if not allow_outside_window:
+                if not self.memory.consume_conversation_message(channel_id):
+                    return None
             # Summarize batch into a composite user message
             lines = []
             for e in events:

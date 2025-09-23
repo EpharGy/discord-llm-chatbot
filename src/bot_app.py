@@ -57,6 +57,8 @@ async def main() -> None:
 
     queue = MentionsQueue()
     batcher = ConversationBatcher()
+    # Track previous active state per channel for flush-on-end
+    prev_conv_active: dict[str, bool] = {}
 
     # LLM client
     model_cfg = config.model()
@@ -126,7 +128,10 @@ async def main() -> None:
                     batch_interval = int(config.conversation_batch_interval_seconds())
                     batch_limit = int(config.conversation_batch_limit())
                     for cid in batcher.channels():
-                        if memory.conversation_mode_active(str(cid)):
+                        ch_id = str(cid)
+                        active = memory.conversation_mode_active(ch_id)
+                        was_active = prev_conv_active.get(ch_id, False)
+                        if active:
                             events = batcher.drain(str(cid), limit=batch_limit)
                             if events:
                                 reply = await router.build_batch_reply(cid=str(cid), events=events)
@@ -150,7 +155,33 @@ async def main() -> None:
                                     except Exception:
                                         pass
                         else:
+                            # If just transitioned from active to inactive, do one final flush of remaining events
+                            if was_active:
+                                events = batcher.drain(ch_id, limit=batch_limit)
+                                if events:
+                                    try:
+                                        reply = await router.build_batch_reply(cid=ch_id, events=events, allow_outside_window=True)
+                                        if reply:
+                                            import discord
+                                            channel = await client.fetch_channel(int(ch_id))
+                                            if isinstance(channel, (discord.TextChannel, discord.Thread, discord.DMChannel)):
+                                                sent = await channel.send(reply)
+                                            else:
+                                                sent = None
+                                            if sent:
+                                                memory.record({
+                                                    "channel_id": str(ch_id),
+                                                    "author_id": str(getattr(sent.author, 'id', '0')),
+                                                    "content": reply,
+                                                    "is_bot": True,
+                                                    "created_at": sent.created_at if getattr(sent, 'created_at', None) else None,
+                                                    "author_name": getattr(sent.author, 'display_name', 'bot'),
+                                                })
+                                    except Exception:
+                                        pass
+                            # Clear any stragglers after final flush or if long inactive
                             batcher.clear(str(cid))
+                        prev_conv_active[ch_id] = active
                 except Exception:
                     pass
                 await asyncio.sleep(max(1, int(batch_interval)))

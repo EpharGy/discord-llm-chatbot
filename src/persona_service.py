@@ -43,7 +43,12 @@ class PersonaService:
         m = _FRONTMATTER_RE.match(text)
         if m:
             fm, body = m.group(1), m.group(2)
-            meta = yaml.safe_load(fm) or {}
+            try:
+                meta = yaml.safe_load(fm) or {}
+            except Exception:
+                # On malformed YAML frontmatter, keep content as part of body and continue
+                meta = {}
+                body = (fm + "\n" + body)
         else:
             meta, body = {}, text
         return Persona(meta=meta, body=body.strip())

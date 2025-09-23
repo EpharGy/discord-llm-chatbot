@@ -39,6 +39,34 @@ class PromptTemplateEngine:
     def build_system_message(self) -> str:
         # Reload templates if files changed
         self._maybe_reload_templates()
+        # Hot-apply template path changes from config without restart
+        try:
+            from .config_service import ConfigService
+            cfg = ConfigService("config.yaml")
+            new_system = cfg.system_prompt_path()
+            new_context = cfg.context_template_path()
+            if new_system and str(new_system) != str(getattr(self, "_system_path", "")):
+                self._system_path = str(new_system)
+                # Force reload on next check
+                self._sys_mtime_ns = -1
+                self._maybe_reload_templates()
+            if new_context and str(new_context) != str(getattr(self, "_context_path", "")):
+                self._context_path = str(new_context)
+                self._ctx_mtime_ns = -1
+                self._maybe_reload_templates()
+        except Exception:
+            pass
+        # Hot-apply persona path changes from config without restart
+        try:
+            from .config_service import ConfigService
+            cfg = ConfigService("config.yaml")
+            current_path = cfg.persona_path()
+            # Compare as strings to avoid Path normalization differences
+            if str(getattr(self.persona, "path", "")) != str(current_path):
+                self.persona.set_path(current_path)
+        except Exception:
+            # If config load fails, keep existing persona path
+            pass
         persona_block = self.persona.body()
         return f"{self.system_prompt}\n\n[Persona]\n{persona_block}"
 
