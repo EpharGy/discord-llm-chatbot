@@ -1,0 +1,109 @@
+LOG_LEVEL: INFO  # INFO, DEBUG, FULL - INFO: standard levels; DEBUG adds more detail; FULL includes full request/response bodies (no secrets)
+LIB_LOG_LEVEL: WARNING  # Controls verbosity of third-party libs (discord/httpx/httpcore). Typical: WARNING or ERROR; set DEBUG for deep library tracing.
+LOG_PROMPTS: false  # if true, prompt and response text are saved as files in logs/prompts-YYYYMMDD-HHMMSS for debugging; may include sensitive info so use with caution
+LOG_ERRORS: true # if true, errors are logged to logs/errors.log for debugging
+
+model:
+  provider: openrouter
+  temperature: 0.6  # temperature controls randomness of output (0.0 = deterministic, 1.0 = very random)
+  top_p: 1.0
+  max_tokens: 2048 # max_tokens controls maximum completion tokens (reply size)
+  context_window: 32768 # context_window: total context window (prompt + completion) supported by the selected model
+  concurrency: 3
+  retry_attempts: 3 # number of retry attempts for failed requests (0 = no retries)
+  models: # uses first model then sequential order if until one is available, https://openrouter.ai/models for more.
+  # Free/open models (may be rate-limited or unavailable at times):
+   - "x-ai/grok-4-fast:free"
+   - "google/gemini-2.0-flash-exp:free"
+   - "nvidia/nemotron-nano-9b-v2:free"
+   - "deepseek/deepseek-r1-0528:free"
+   - "meta-llama/llama-4-scout:free"
+   - "meta-llama/llama-3.3-8b-instruct:free"
+  # Premium/paid models:
+   - "google/gemini-2.5-flash"
+   - "meta-llama/llama-4-scout"
+
+  allow_auto_fallback: true   # use openrouter's automatic fallback if the main model is down, this may incur cost
+  
+  # base_url: https://openrouter.ai/api/v1/chat/completions  # override if needed
+  
+  http_referer: "https://yourweb.com"   # optional for listing in Openrouter leaderboards/dashboards
+  x_title: "Discord LLM Bot"  # optional for listing in Openrouter leaderboards/dashboards
+  stop:
+    - "<|eot|>" # End of text token for LLaMA models
+    - "<|im_end|>" # End of message token for ChatML models
+    - "<｜end▁of▁sentence｜>" # End of message token for DeepSeek models
+    - "<end_of_turn>" # End of message for Gemma models
+
+
+rate_limits:
+  # Anti-spam: hard cap per channel to avoid flooding LLM calls
+  window_seconds: 300
+  max_responses: 10
+  warning_ttl_seconds: 10
+
+participation:
+  mention_required: false  # if true, bot only responds when mentioned; if false, may respond in general chat
+  respond_to_name: true # Respond to name aliases even if not mentioned
+  name_aliases: ["assistant", "botname"] # list of name aliases to respond to if respond_to_name=true
+  random_response_chance: 0.2 # % chance for general chat responses
+  general_chat:
+    allowed_channels: # list of Discord channel IDs where general chat responses are allowed; empty means none.
+      - "1234567890123456789" # channel1
+      - "2345678901234567890" # channel2
+      # - "3456789012345678901" # channel3
+    response_chance_override: # list of Discord channel IDs where random response chance is 100%, these id's must be in allowed_channels
+      - "1234567890123456789" # channel1
+      - "2345678901234567890" # channel2
+
+  bots:
+    respond_to_bots: true # if true, bot may respond to other bot messages
+    blocked_bot_ids: "" # comma-separated Discord user IDs bot should ignore even if respond_to_bots=true
+  conversation_mode:
+    enabled: true # after a bot reply (mention), auto-respond for a short period in that channel
+    include_non_replies: true  # if true, any bot response in the channel (not just replies) will enable the conversation mode
+    window_seconds: 75  # duration after a bot reply to keep responding
+    max_messages: 4 # maximum additional messages to respond to during the window
+    batch_interval_seconds: 10  # when in conversation mode, aggregate messages and reply once per this interval
+    batch_limit: 10 # maximum messages to aggregate per batch interval
+    affects_cooldown: false  # if false, auto-window replies won't reset general chat cooldown (still count for anti-spam)
+  cooldown:
+    min_messages_between_replies: 10  # for general chat, trigger if >= this many messages since last reply
+    min_seconds_between_replies: 900  # minutes; trigger if >= this many seconds since last reply
+  context_on_time_cooldown:
+    minutes: 10 # when triggered by time cooldown, only consider last N minutes of messages
+    max_messages: 50  # but still cap by message limit (will be intersected with context.window_size)
+
+context:
+  # window_size is the Max number of recent messages to include from this channel when building context
+  # for the LLM (i.e., last N messages). When a time-based cooldown triggers, this
+  # is further intersected with `participation.context_on_time_cooldown.max_messages`.
+  window_size: 10
+  # Use a structured context block rendered via template
+  use_template: true
+  # Keep this many raw turns (no brackets) after the context block for continuity
+  keep_history_tail: 2
+  # Minutes threshold to separate recent vs older messages in the context block
+  recency_minutes: 10
+  cluster_max_messages: 10 # max messages to cluster together when building context
+  thread_affinity_max: 6 # of replies to consider in a thread of replies to include in context
+  system_prompt_path: prompts/system.txt  # path to system prompt text file, leave blank to disable
+  context_template_path: prompts/context_template.txt # path to context template file, leave blank to disable
+  persona_path: personas/default.md # path to persona markdown file, leave blank to disable
+  lore:
+    enabled: true  # enable/disable lore usage
+    paths:  # Accepts one or more JSON files with SillyTavern-like schema under 'entries', all entries are 'on', matches only first keywords, constant = true always loaded.
+      - "lore/default.json"
+    #  - "lore/extra.json"
+      - "lore/default.md"  # markdown lore files are always loaded if present
+    md_priority: low # high = higher priority than JSON lore, low = lower priority than JSON lore, md files are always loaded if present
+  # Up to this fraction of prompt budget (context_window - max_tokens) may be used for lore (not reserved if unused)
+    max_fraction: 0.33
+
+discord:
+  intents:
+    message_content: true
+    members: false
+    presences: false
+    message_char_limit: 2000  # Discords's limit is 2000 characters
+    max_response_messages: 2  # how many messages to split a long response into (1 = no splitting)

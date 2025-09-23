@@ -1,0 +1,175 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+import yaml
+
+
+@dataclass
+class Config:
+    raw: dict
+
+
+class ConfigService:
+    def __init__(self, path: str | Path):
+        self._path = Path(path)
+        with self._path.open("r", encoding="utf-8") as f:
+            self._cfg = Config(raw=yaml.safe_load(f) or {})
+        try:
+            self._mtime_ns = self._path.stat().st_mtime_ns
+        except Exception:
+            self._mtime_ns = 0
+
+    def _maybe_reload(self) -> None:
+        try:
+            m = self._path.stat().st_mtime_ns
+        except Exception:
+            return
+        if m != getattr(self, "_mtime_ns", 0):
+            try:
+                with self._path.open("r", encoding="utf-8") as f:
+                    self._cfg = Config(raw=yaml.safe_load(f) or {})
+                self._mtime_ns = m
+            except Exception:
+                # On read error, keep previous config
+                pass
+
+    def model(self) -> dict:
+        return self._cfg.raw.get("model", {})
+
+    def rate_limits(self) -> dict:
+        return self._cfg.raw.get("rate_limits", {})
+
+    def participation(self) -> dict:
+        return self._cfg.raw.get("participation", {})
+
+    def context(self) -> dict:
+        return self._cfg.raw.get("context", {})
+
+    def persona_path(self) -> str:
+        self._maybe_reload()
+        return str(self.context().get("persona_path", "personas/default.md"))
+
+    def system_prompt_path(self) -> str:
+        self._maybe_reload()
+        return str(self.context().get("system_prompt_path", "prompts/system.txt"))
+
+    def context_template_path(self) -> str:
+        self._maybe_reload()
+        return str(self.context().get("context_template_path", "prompts/context_template.txt"))
+
+
+    def discord_intents(self) -> dict:
+        return self._cfg.raw.get("discord", {}).get("intents", {})
+
+    def discord_message_char_limit(self) -> int:
+        self._maybe_reload()
+        try:
+            return int(self._cfg.raw.get("discord", {}).get("message_char_limit", 2000))
+        except Exception:
+            return 2000
+
+    def max_response_messages(self) -> int:
+        self._maybe_reload()
+        try:
+            return int(self._cfg.raw.get("discord", {}).get("max_response_messages", 2))
+        except Exception:
+            return 2
+
+    def window_size(self) -> int:
+        return int(self.context().get("window_size", 10))
+
+    def use_template(self) -> bool:
+        self._maybe_reload()
+        return bool(self.context().get("use_template", True))
+
+    def keep_history_tail(self) -> int:
+        self._maybe_reload()
+        return int(self.context().get("keep_history_tail", 2))
+
+    def recency_minutes(self) -> int:
+        self._maybe_reload()
+        try:
+            return int(self.context().get("recency_minutes", 10))
+        except Exception:
+            return 10
+
+    def cluster_max_messages(self) -> int:
+        """Maximum number of recent messages to keep in the conversation cluster."""
+        self._maybe_reload()
+        try:
+            return int(self.context().get("cluster_max_messages", self.window_size()))
+        except Exception:
+            return self.window_size()
+
+    def thread_affinity_max(self) -> int:
+        """Max additional thread-affinity turns (bot or current author) to force-include."""
+        self._maybe_reload()
+        try:
+            return int(self.context().get("thread_affinity_max", 6))
+        except Exception:
+            return 6
+
+    # Lore configuration
+    def lore_enabled(self) -> bool:
+        self._maybe_reload()
+        lore = self.context().get("lore", {})
+        return bool(lore.get("enabled", False))
+
+    def lore_paths(self) -> list[str]:
+        self._maybe_reload()
+        lore = self.context().get("lore", {})
+        paths = lore.get("paths", [])
+        if isinstance(paths, str):
+            return [paths]
+        return [str(p) for p in (paths or [])]
+
+    def lore_max_fraction(self) -> float:
+        self._maybe_reload()
+        lore = self.context().get("lore", {})
+        try:
+            return float(lore.get("max_fraction", 0.33))
+        except Exception:
+            return 0.33
+
+    def lore_md_priority(self) -> str:
+        self._maybe_reload()
+        lore = self.context().get("lore", {})
+        v = str(lore.get("md_priority", "low")).lower()
+        return "high" if v == "high" else "low"
+
+    def log_level(self) -> str:
+        return str(self._cfg.raw.get("LOG_LEVEL", "INFO")).upper()
+
+    def lib_log_level(self) -> str | None:
+        v = self._cfg.raw.get("LIB_LOG_LEVEL") or self._cfg.raw.get("LIV_LOG_LEVEL")
+        return str(v).upper() if v else None
+
+    def log_prompts(self) -> bool:
+        self._maybe_reload()
+        v = self._cfg.raw.get("LOG_PROMPTS", False)
+        return bool(v)
+
+    def log_errors(self) -> bool:
+        self._maybe_reload()
+        v = self._cfg.raw.get("LOG_ERRORS", False)
+        return bool(v)
+
+    def max_context_tokens(self) -> int:
+        """Total model context window (tokens) for prompt + completion)."""
+        self._maybe_reload()
+        m = self.model()
+        return int(m.get("context_window", m.get("context_window_tokens", 8192)))
+
+    def response_tokens_max(self) -> int:
+        """Reserved tokens for the model's completion (aka headroom). Uses model.max_tokens."""
+        self._maybe_reload()
+        return int(self.model().get("max_tokens", 512))
+
+    def conversation_batch_interval_seconds(self) -> int:
+        self._maybe_reload()
+        return int(self.participation().get("conversation_mode", {}).get("batch_interval_seconds", 10))
+
+    def conversation_batch_limit(self) -> int:
+        self._maybe_reload()
+        return int(self.participation().get("conversation_mode", {}).get("batch_limit", 10))

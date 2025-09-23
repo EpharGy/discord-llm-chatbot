@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "discord-llm-bot"
+version = "0.1.0"
+description = "A Discord bot that chats using an LLM via OpenRouter"
+requires-python = ">=3.10"
+dependencies = [
+  "discord.py>=2.4.0",
+  "httpx>=0.27.0",
+  "pydantic>=2.8.0",
+  "pyyaml>=6.0.1",
+  "jinja2>=3.1.4",
+  "tenacity>=8.5.0",
+  "tiktoken>=0.7.0",
+  "python-dotenv>=1.0.1"
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

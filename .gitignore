@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.env
+.env.*
+
+# VS Code / IDE
+.vscode/
+.idea/
+
+# Local config & secrets
+config.yaml
+logs/**
+*.log
+
+# logs
+logs/
+
+# Tests & caches
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Lore: ignore everything except shipped defaults
+lore/*
+!lore/default.json
+!lore/default.md
+
+# Personas: ignore everything except shipped default persona
+personas/*
+!personas/default.md
+
+# Prompts: ignore everything except shipped base templates
+prompts/*
+!prompts/system.txt
+!prompts/context_template.txt
