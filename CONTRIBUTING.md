@@ -13,11 +13,11 @@ Thanks for your interest in contributing! This project welcomes PRs.
    ```
 
 4. Copy templates if needed (first run does this automatically): `.env.example -> .env`, `config.example.yaml -> config.yaml`.
-5. Run a quick smoke test:
+5. Run the bot locally:
 
    ```powershell
    $env:PYTHONPATH = "src"
-   python -m pytest -q
+   python -m src.bot_app
    ```
 
 ## Coding standards
@@ -29,13 +29,7 @@ Thanks for your interest in contributing! This project welcomes PRs.
 
 ## Lint & format
 
-- Lint/format run in CI using Ruff. You can run locally if you like:
-
-   ```powershell
-   pip install ruff
-   ruff check .
-   ruff format .
-   ```
+- Keep code readable and small; no mandatory linter or test runner is enforced by this repo.
 
 ## Tests
 
