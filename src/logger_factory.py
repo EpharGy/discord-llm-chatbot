@@ -1,4 +1,5 @@
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 from typing import Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -62,17 +63,26 @@ def configure_logging(level: Optional[str] = None, tz: Optional[str] = None, fmt
     handler.setFormatter(_TzFormatter(pattern, tz=tz, datefmt="%Y-%m-%d %H:%M:%S%z"))
     root.addHandler(handler)
 
-    # Optional: write ERROR+ logs to a persistent file
-    want_error_file = log_errors
-    if want_error_file is None:
-        want_error_file = str(os.getenv("LOG_ERRORS", "")).lower() in ("1", "true", "yes", "on")
-    if want_error_file:
+    # Optional: write logs to a persistent file. Historically this was ERROR-only; now
+    # it mirrors the console level and writes full output to logs/log.log.
+    want_file = log_errors  # renamed upstream to log_to_output; kept param name for compat
+    if want_file is None:
+        want_file = str(os.getenv("LOG_TO_OUTPUT", "") or os.getenv("LOG_ERRORS", "")).lower() in ("1", "true", "yes", "on")
+    if want_file:
         try:
             os.makedirs("logs", exist_ok=True)
-            err_handler = logging.FileHandler("logs/errors.log", encoding="utf-8")
-            err_handler.setLevel(logging.ERROR)
-            err_handler.setFormatter(_TzFormatter(pattern, tz=tz, datefmt="%Y-%m-%d %H:%M:%S%z"))
-            root.addHandler(err_handler)
+            # Rotate at ~1MB with up to 5 backups: log.log, log.log.1 .. log.log.5
+            file_handler = RotatingFileHandler(
+                filename="logs/log.log",
+                mode="a",
+                maxBytes=1_000_000,
+                backupCount=5,
+                encoding="utf-8",
+                delay=False,
+            )
+            file_handler.setLevel(py_level)
+            file_handler.setFormatter(_TzFormatter(pattern, tz=tz, datefmt="%Y-%m-%d %H:%M:%S%z"))
+            root.addHandler(file_handler)
         except Exception:
             # Don't break startup due to file I/O
             pass

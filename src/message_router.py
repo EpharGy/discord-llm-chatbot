@@ -34,6 +34,90 @@ class MessageRouter:
         self.lore = lore
         self.lore_cfg = lore_config or {"enabled": False, "max_fraction": 0.33}
 
+    # ------------------------------------------------------------------
+    # Shared prompt assembly + budgeting helper (single-turn & batch)
+    # ------------------------------------------------------------------
+    def _assemble_and_budget(self,
+                              system_blocks: list[dict],
+                              history: list[dict],
+                              user_msg: dict,
+                              prompt_budget: int,
+                              protect_last_assistant: str | None = None,
+                              truncate_user_min: int = 8) -> tuple[list[dict], int, int]:
+        """Return (messages, tokens_before, tokens_after) applying trimming rules.
+
+        Trimming strategy:
+        1. Start with system_blocks + history + user.
+        2. If over budget, drop oldest history entries (preserving the last assistant message whose
+           content exactly matches protect_last_assistant, if provided) until within or history empty.
+        3. If still over, truncate user content.
+        """
+        messages = [*system_blocks, *history, user_msg]
+        try:
+            tokens_before = self.tok.estimate_tokens_messages(messages)
+        except Exception:
+            tokens_before = -1
+        # Step 1: trim history
+        if tokens_before > prompt_budget and history:
+            trimmed = list(history)
+            def current_tokens(hlist):
+                try:
+                    return self.tok.estimate_tokens_messages([*system_blocks, *hlist, user_msg])
+                except Exception:
+                    return 10**9
+            while trimmed and current_tokens(trimmed) > prompt_budget:
+                # Avoid dropping protected last assistant content
+                if protect_last_assistant and trimmed[0].get('role') == 'assistant' and trimmed[0].get('content') == protect_last_assistant:
+                    if len(trimmed) > 1:
+                        trimmed.pop(1)
+                    else:
+                        break
+                else:
+                    trimmed.pop(0)
+            history = trimmed
+            messages = [*system_blocks, *history, user_msg]
+        # Step 2: truncate user body
+        try:
+            total_after_history = self.tok.estimate_tokens_messages(messages)
+        except Exception:
+            total_after_history = -1
+        if total_after_history > prompt_budget:
+            try:
+                # Compute remaining allowance = prompt_budget - tokens(system_blocks + trimmed history w/ empty user)
+                try:
+                    empty_user = dict(user_msg)
+                    empty_user['content'] = ''
+                    base_tokens = self.tok.estimate_tokens_messages([*system_blocks, *history, empty_user])
+                except Exception:
+                    base_tokens = 0
+                remaining_raw = prompt_budget - base_tokens
+                if remaining_raw < 1:
+                    remaining_raw = 1
+                # If overall budget is smaller than truncate_user_min, allow smaller output
+                if prompt_budget < truncate_user_min:
+                    remaining = remaining_raw
+                else:
+                    if remaining_raw < truncate_user_min:
+                        remaining_raw = truncate_user_min
+                    remaining = remaining_raw
+                allow = remaining
+                original = user_msg.get('content', '')
+                truncated = self.tok.truncate_text_tokens(original, max_tokens=allow)
+                # Fallback: if tokenizer's truncation did not reduce enough tokens (len words proxy), slice manually
+                # Final guard: enforce <= remaining (allow)
+                toks = truncated.split()
+                if len(toks) > allow:
+                    truncated = ' '.join(toks[:allow])
+                user_msg['content'] = truncated
+            except Exception:
+                pass
+            messages = [*system_blocks, *history, user_msg]
+        try:
+            tokens_after = self.tok.estimate_tokens_messages(messages)
+        except Exception:
+            tokens_after = -1
+        return messages, tokens_before, tokens_after
+
     def _split_for_discord(self, text: str) -> list[str]:
         # Split into at most config.max_response_messages parts, respecting discord.message_char_limit
         try:
@@ -488,34 +572,18 @@ class MessageRouter:
         except Exception:
             pass
 
-        # Now append history tail and user
+        # Assemble + budget via shared helper
         final_user_msg = {"role": "user", "content": user_content}
-        messages_for_est.extend([*history, final_user_msg])
-        tokens_before = self.tok.estimate_tokens_messages(messages_for_est)
-        # If over budget, trim history from oldest while keeping parent-bot message if present
-        if tokens_before > prompt_budget and history:
-            # Identify if parent assistant message was injected at the end
-            parent_assistant = None
-            if event.get("is_reply_to_bot") and event.get("reply_to_message_content"):
-                parent_assistant = {"role": "assistant", "content": event.get("reply_to_message_content")}
-            trimmed = list(history)
-            while trimmed and self.tok.estimate_tokens_messages([system_msg, *trimmed, user_msg]) > prompt_budget:
-                # Avoid removing the parent assistant message if it exists and matches the last element
-                if parent_assistant and trimmed and trimmed[0] == parent_assistant:
-                    # Skip removing the parent; remove next oldest instead
-                    if len(trimmed) > 1:
-                        trimmed.pop(1)
-                    else:
-                        break
-                else:
-                    trimmed.pop(0)
-            history = trimmed
-
-        # If still over budget, truncate the user message content as last resort
-        if self.tok.estimate_tokens_messages(messages_for_est) > prompt_budget:
-            user_msg["content"] = self.tok.truncate_text_tokens(user_msg["content"], max_tokens=max(8, prompt_budget - self.tok.estimate_tokens_messages([system_msg, *history])))
-
-        tokens_after = self.tok.estimate_tokens_messages(messages_for_est)
+        system_blocks = list(messages_for_est)  # system + lore + time + template (if any)
+        protect = event.get("reply_to_message_content") if event.get("is_reply_to_bot") else None
+        messages_for_est, tokens_before, tokens_after = self._assemble_and_budget(
+            system_blocks=system_blocks,
+            history=history,
+            user_msg=final_user_msg,
+            prompt_budget=prompt_budget,
+            protect_last_assistant=protect,
+            truncate_user_min=8,
+        )
         try:
             self.log.debug(
                 f"[tokenizer-summary] {fmt('channel', event.get('channel_name', event['channel_id']))} "
@@ -890,297 +958,183 @@ class MessageRouter:
             "author_name": (getattr(getattr(sent, 'author', None), 'display_name', 'bot') if sent else 'bot'),
         })
 
-    async def build_batch_reply(self, cid: str, events: list[dict], allow_outside_window: bool = False) -> str | None:
-        # Produce a single summarized reply for a batch of events; does NOT send it.
-        if not events:
-            return None
-        if not self.llm:
-            return None
-        try:
-            channel_id = cid
-            # Consume one conversation message budget up front; if not possible and not a final flush, skip
-            if not allow_outside_window:
-                if not self.memory.consume_conversation_message(channel_id):
-                    return None
-            # Summarize batch into a composite user message
-            lines = []
-            for e in events:
-                author = e.get("author_name") or "user"
-                content = e.get("content") or ""
-                lines.append(f"[{author}] {content}")
-            batch_text = "\n".join(lines)
-            system_msg = {"role": "system", "content": self.tmpl.build_system_message()}
-            recent = self.memory.get_recent(channel_id, limit=self.policy.window_size())
-            # Collect structured messages
-            structured_msgs = []
-            for it in recent:
-                role = "assistant" if it.get("is_bot") else "user"
-                author = it.get("author_name") or ("bot" if it.get("is_bot") else "user")
-                content = it.get("content", "")
-                timestamp_iso = it.get("created_at").isoformat() if it.get("created_at") else None
-                structured_msgs.append({"role": role, "author": author, "content": content, "timestamp_iso": timestamp_iso})
-            # Re-cluster recent context similarly for batch prompts
-            try:
-                from .config_service import ConfigService
-                cfg = ConfigService("config.yaml")
-                recency_min = int(cfg.recency_minutes())
-                cluster_max = max(1, int(cfg.cluster_max_messages()))
-                thread_max = max(0, int(cfg.thread_affinity_max()))
-                now_ts = datetime.now(timezone.utc)
-                cutoff = now_ts - _timedelta(minutes=recency_min)
-                def _parse_iso(ts: str | None):
-                    if not ts:
-                        return None
-                    try:
-                        t = dt.fromisoformat(ts)
-                        if t.tzinfo is None:
-                            t = t.replace(tzinfo=timezone.utc)
-                        return t
-                    except Exception:
-                        return None
-                recent_structs = []
-                for m in structured_msgs:
-                    t = _parse_iso(m.get("timestamp_iso"))
-                    if (t is None) or (t >= cutoff):
-                        recent_structs.append((t, m))
-                if recent_structs:
-                    recent_structs.sort(key=lambda x: (x[0] or now_ts))
-                    clustered = [m for _, m in recent_structs][-cluster_max:]
-                    structured_msgs = clustered
-                else:
-                    structured_msgs = structured_msgs[-cluster_max:]
-                # Thread affinity for batch: prefer recent assistant turns and any turns from most frequent recent author
-                try:
-                    # Identify dominant recent author in the batch events
-                    authors = [e.get("author_name") for e in events if e.get("author_name")]
-                    dom_author = None
-                    if authors:
-                        from collections import Counter
-                        dom_author = Counter(authors).most_common(1)[0][0]
-                    tail_candidates = []
-                    for m in reversed([m for _, m in recent_structs] if recent_structs else structured_msgs):
-                        if m.get("role") == "assistant" or (dom_author and (m.get("role") == "user" and m.get("author") == dom_author)):
-                            tail_candidates.append(m)
-                        if len(tail_candidates) >= thread_max:
-                            break
-                    tail_candidates = list(reversed(tail_candidates))
-                    seen = set()
-                    merged = []
-                    for m in structured_msgs + tail_candidates:
-                        key = (m.get("role"), m.get("author"), m.get("content"))
-                        if key in seen:
-                            continue
-                        seen.add(key)
-                        merged.append(m)
-                    structured_msgs = merged[-cluster_max:]
-                except Exception:
-                    pass
-            except Exception:
-                pass
+    async def build_batch_reply(self, cid: str, events: list[dict], channel=None, allow_outside_window: bool = False) -> str | None:
+        """Produce a summarized reply for a batch of messages.
 
-            # Build raw history tail
-            use_tmpl = False
-            keep_tail = 2
+        cid: channel id (string)
+        events: list of event dicts drained from the batcher
+        channel: optional discord channel object (for NSFW system prompt selection)
+        allow_outside_window: if True, skip consuming conversation-mode budget (used on window flush)
+        """
+        if not events or not self.llm:
+            return None
+        # Budget logic with override support
+        if not allow_outside_window:
+            is_override = False
             try:
-                from .config_service import ConfigService
-                cfg = ConfigService("config.yaml")
-                use_tmpl = bool(cfg.use_template())
-                keep_tail = int(cfg.keep_history_tail())
+                is_override = self.policy.is_response_chance_override(cid)
             except Exception:
-                pass
-            history = []
-            if use_tmpl:
-                tail = structured_msgs[-keep_tail:] if keep_tail > 0 else []
-                for m in tail:
-                    history.append({"role": m["role"], "content": m["content"]})
+                is_override = False
+            if is_override:
+                self.log.debug(f"[batch-override-no-consume] channel={cid} events={len(events)}")
             else:
-                for it in recent:
-                    role = "assistant" if it.get("is_bot") else "user"
-                    if it.get("is_bot"):
-                        content = it.get("content", "")
-                    else:
-                        author = it.get("author_name") or "user"
-                        content = f"[{author}] {it.get('content', '')}"
-                    history.append({"role": role, "content": content})
-
-            # If any event is a reply to the bot, ensure parent bot message is present
+                if not self.memory.consume_conversation_message(cid):
+                    self.log.debug(f"[batch-skip] budget_exhausted channel={cid} events={len(events)}")
+                    return None
+        # Aggregate user batch text
+        batch_text = "\n".join(f"[{e.get('author_name') or 'user'}] {e.get('content') or ''}" for e in events)
+        # NSFW system selection
+        is_nsfw = False
+        try:
+            if channel is not None:
+                is_nsfw = bool(getattr(channel, 'nsfw', False)) or bool(getattr(getattr(channel, 'parent', None), 'nsfw', False))
+        except Exception:
+            pass
+        system_msg = {"role": "system", "content": self.tmpl.build_system_message_for(is_nsfw=is_nsfw)}
+        # Config-driven parameters
+        try:
+            from .config_service import ConfigService
+            cfg = ConfigService('config.yaml')
+            use_tmpl = bool(cfg.use_template())
+            keep_tail = int(cfg.keep_history_tail())
+            max_ctx = int(cfg.max_context_tokens())
+            reserve = int(cfg.response_tokens_max())
+        except Exception:
+            use_tmpl, keep_tail, max_ctx, reserve = True, 2, 8192, 512
+        prompt_budget = max(1, max_ctx - reserve)
+        # Recent context
+        recent = self.memory.get_recent(cid, limit=self.policy.window_size())
+        structured = []
+        for it in recent:
+            structured.append({
+                'role': 'assistant' if it.get('is_bot') else 'user',
+                'author': it.get('author_name') or ('bot' if it.get('is_bot') else 'user'),
+                'content': it.get('content',''),
+                'timestamp_iso': it.get('created_at').isoformat() if it.get('created_at') else None,
+            })
+        # History assembly (raw or template-tail)
+        history: list[dict] = []
+        if use_tmpl:
+            tail = structured[-keep_tail:] if keep_tail > 0 else []
+            for m in tail:
+                history.append({'role': m['role'], 'content': m['content']})
+        else:
+            for it in recent:
+                role = 'assistant' if it.get('is_bot') else 'user'
+                if it.get('is_bot'):
+                    content = it.get('content','')
+                else:
+                    author = it.get('author_name') or 'user'
+                    content = f"[{author}] {it.get('content','')}"
+                history.append({'role': role, 'content': content})
+        # Preserve parent message when replying to bot
+        parent_content = None
+        try:
+            for e in events:
+                if e.get('is_reply_to_bot') and e.get('reply_to_message_content'):
+                    parent_content = e.get('reply_to_message_content')
+            if parent_content and all(h.get('content') != parent_content for h in history):
+                history.append({'role': 'assistant', 'content': parent_content})
+        except Exception:
+            pass
+        user_msg = {'role': 'user', 'content': batch_text}
+        system_blocks = [system_msg]
+        # Lore block
+        builder = getattr(self.lore, 'build_lore_block', None) if getattr(self, 'lore', None) is not None else None
+        if builder and self.lore_cfg.get('enabled'):
             try:
-                parent_content = None
-                for e in events:
-                    if e.get("is_reply_to_bot") and e.get("reply_to_message_content"):
-                        parent_content = e.get("reply_to_message_content")
-                if parent_content and all(h.get("content") != parent_content for h in history):
-                    history.append({"role": "assistant", "content": parent_content})
-            except Exception:
-                pass
-
-            user_msg = {"role": "user", "content": batch_text}
-
-            # Apply heuristic budgeting (same as single-message path)
-            try:
-                from .config_service import ConfigService
-                cfg = ConfigService("config.yaml")
-                max_ctx = int(cfg.max_context_tokens())
-                reserve = int(cfg.response_tokens_max())
-            except Exception:
-                max_ctx = 8192
-                reserve = 512
-            prompt_budget = max(1, max_ctx - reserve)
-
-            # Lore block (after system, before context)
-            system_ctx = None
-            builder = getattr(self.lore, "build_lore_block", None) if getattr(self, "lore", None) is not None else None
-            messages_for_est = [system_msg]
-            if builder and self.lore_cfg.get("enabled"):
-                lore_fraction = float(self.lore_cfg.get("max_fraction", 0.33))
-                prompt_budget = max(1, max_ctx - reserve)
+                lore_fraction = float(self.lore_cfg.get('max_fraction', 0.33))
                 lore_budget = max(1, int(prompt_budget * lore_fraction))
-                corpus_parts = [f"{m.get('author')}: {m.get('content')}" for m in structured_msgs]
-                corpus_parts.append(batch_text)
-                corpus = "\n".join(corpus_parts)
+                corpus = "\n".join([f"{m.get('author')}: {m.get('content')}" for m in structured] + [batch_text])
                 lore_text = builder(corpus_text=corpus, max_tokens=lore_budget, tokenizer=self.tok, logger=self.log)
                 if lore_text:
-                    messages_for_est.append({"role": "system", "content": "You may use the following background context if it is relevant to the user’s request.\n" + lore_text})
-            # Subtle current local time hint (no location/zone)
-            try:
-                messages_for_est.append({"role": "system", "content": f"Current Date/Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}"})
+                    system_blocks.append({'role': 'system', 'content': 'You may use the following background context if it is relevant to the user’s request.\n' + lore_text})
             except Exception:
                 pass
-            if use_tmpl:
-                context_block = self.tmpl.render(conversation_window=structured_msgs, user_input=batch_text, summary=None)
-                system_ctx = {"role": "system", "content": context_block}
-                messages_for_est.append(system_ctx)
-            def _assemble():
-                return [*messages_for_est, *history, user_msg]
-            messages_for_est = _assemble()
-
-            tokens_before = self.tok.estimate_tokens_messages(messages_for_est)
-            if tokens_before > prompt_budget and history:
-                trimmed = list(history)
-                while trimmed and self.tok.estimate_tokens_messages([system_msg, *( [system_ctx] if system_ctx else [] ), *trimmed, user_msg]) > prompt_budget:
-                    trimmed.pop(0)
-                history = trimmed
-                messages_for_est = _assemble()
-            if self.tok.estimate_tokens_messages(messages_for_est) > prompt_budget:
-                # truncate user content last
-                user_msg["content"] = self.tok.truncate_text_tokens(user_msg["content"], max_tokens=max(8, prompt_budget - self.tok.estimate_tokens_messages([system_msg, *( [system_ctx] if system_ctx else [] ), *history])))
-                messages_for_est = _assemble()
+        # Time hint
+        try:
+            system_blocks.append({'role': 'system', 'content': f"Current Date/Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}"})
+        except Exception:
+            pass
+        # Template context
+        if use_tmpl:
             try:
-                tokens_after = self.tok.estimate_tokens_messages(messages_for_est)
-                self.log.debug(
-                    f"[tokenizer-summary] {fmt('channel', cid)} {fmt('user', 'batch')} "
-                    f"{fmt('tokens_before', tokens_before)} {fmt('tokens_after', tokens_after)} {fmt('budget', prompt_budget)}"
+                context_block = self.tmpl.render(conversation_window=structured, user_input=batch_text, summary=None)
+                if context_block:
+                    system_blocks.append({'role': 'system', 'content': context_block})
+            except Exception:
+                pass
+        # Budget using shared helper
+        # Ensure parent_content variable exists even if earlier try block failed
+        if 'parent_content' not in locals():
+            parent_content = None
+        messages, tokens_before, tokens_after = self._assemble_and_budget(
+            system_blocks=system_blocks,
+            history=history,
+            user_msg=user_msg,
+            prompt_budget=prompt_budget,
+            protect_last_assistant=parent_content,
+            truncate_user_min=8,
+        )
+        try:
+            self.log.debug(
+                f"[tokenizer-summary] {fmt('channel', cid)} {fmt('user', 'batch')} {fmt('tokens_before', tokens_before)} {fmt('tokens_after', tokens_after)} {fmt('budget', prompt_budget)}"
+            )
+        except Exception:
+            pass
+        # Model loop
+        cfg_models = self.model_cfg.get('models')
+        if isinstance(cfg_models, str):
+            models_to_try = [m.strip() for m in cfg_models.split(',') if m.strip()]
+        elif isinstance(cfg_models, list):
+            models_to_try = [str(m) for m in cfg_models if str(m).strip()]
+        else:
+            models_to_try = []
+        allow_auto = bool(self.model_cfg.get('allow_auto_fallback', False))
+        stops = self.model_cfg.get('stop')
+        correlation_id = f"{cid}-batch"
+        reply = None
+        for idx, model_name in enumerate(models_to_try):
+            if not model_name:
+                continue
+            try:
+                start_ts = datetime.now(timezone.utc)
+                self.log.info(f"[llm-start] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
+                result = await self.llm.generate_chat(
+                    messages,
+                    max_tokens=self.model_cfg.get('max_tokens'),
+                    model=model_name,
+                    temperature=self.model_cfg.get('temperature'),
+                    top_p=self.model_cfg.get('top_p'),
+                    stop=stops,
+                    context_fields={'channel': cid, 'user': 'batch', 'correlation': correlation_id},
                 )
-            except Exception:
-                pass
-            models_to_try: list[str] = []
-            cfg_models = self.model_cfg.get("models")
-            if isinstance(cfg_models, str):
-                models_to_try = [m.strip() for m in cfg_models.split(",") if m.strip()]
-            elif isinstance(cfg_models, list):
-                models_to_try = [str(m) for m in cfg_models if str(m).strip()]
-            allow_auto = bool(self.model_cfg.get("allow_auto_fallback", False))
-            stops = self.model_cfg.get("stop")
-
-            reply = None
-            correlation_id = f"{cid}-batch"
-            for idx, model_name in enumerate(models_to_try):
-                if not model_name:
-                    continue
-                try:
-                    start_ts = datetime.now(timezone.utc)
-                    self.log.info(
-                        f"[llm-start] {fmt('channel', cid)} {fmt('user', 'batch')} {fmt('model', model_name)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}"
-                    )
-                    result = await self.llm.generate_chat(
-                        messages_for_est,
-                        max_tokens=self.model_cfg.get("max_tokens"),
-                        model=model_name,
-                        temperature=self.model_cfg.get("temperature"),
-                        top_p=self.model_cfg.get("top_p"),
-                        stop=stops,
-                        context_fields={"channel": cid, "user": "batch", "correlation": correlation_id},
-                    )
-                    reply = result.get("text") if isinstance(result, dict) else result
-                    # Optional logging for batch prompts
-                    try:
-                        from .config_service import ConfigService
-                        cfg = ConfigService("config.yaml")
-                        if bool(cfg.log_prompts()):
-                            ts_dir = dt.now().strftime("prompts-%Y%m%d-%H%M%S")
-                            out_dir = Path("logs") / ts_dir
-                            out_dir.mkdir(parents=True, exist_ok=True)
-                            import json
-                            p = {
-                                "correlation": correlation_id,
-                                "channel": cid,
-                                "user": "batch",
-                                "model": model_name,
-                                "messages": messages_for_est,
-                            }
-                            (out_dir / "prompt.json").write_text(json.dumps(p, ensure_ascii=False, indent=2), encoding="utf-8")
-                            lines = []
-                            for m in messages_for_est:
-                                lines.append(f"[{m.get('role','')}] {m.get('content','')}")
-                            (out_dir / "prompt.txt").write_text("\n\n".join(lines), encoding="utf-8")
-                            (out_dir / "response.txt").write_text(str(reply or ""), encoding="utf-8")
-                    except Exception:
-                        pass
-                    dur_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
-                    usage = (result or {}).get("usage") if isinstance(result, dict) else None
-                    if usage and (usage.get("input_tokens") is not None or usage.get("output_tokens") is not None):
-                        self.log.info(
-                            f"[llm-finish] {fmt('channel', cid)} {fmt('user', 'batch')} {fmt('model', model_name)} {fmt('duration_ms', dur_ms)} "
-                            f"{fmt('tokens_in', usage.get('input_tokens','NA'))} {fmt('tokens_out', usage.get('output_tokens','NA'))} {fmt('total_tokens', usage.get('total_tokens','NA'))} "
-                            f"{fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}"
-                        )
-                    else:
-                        self.log.info(
-                            f"[llm-finish] {fmt('channel', cid)} {fmt('user', 'batch')} {fmt('model', model_name)} {fmt('duration_ms', dur_ms)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}"
-                        )
-                    break
-                except Exception as e:
-                    self.log.error(f"LLM error with {model_name}: {e}")
-                    reply = None
-                    try:
-                        self.log.error(f"[llm-model-exhausted] {fmt('model', model_name)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
-                    except Exception:
-                        pass
-
-            if reply is None and allow_auto:
-                try:
-                    try:
-                        self.log.error(f"[llm-fallback-start] {fmt('model', 'openrouter/auto')} {fmt('correlation', correlation_id)}")
-                    except Exception:
-                        pass
-                    self.log.info(f"[llm-autofallback] {fmt('channel', cid)} {fmt('user', 'batch')} {fmt('correlation', correlation_id)}")
-                    start_ts = datetime.now(timezone.utc)
-                    result = await self.llm.generate_chat(
-                        messages_for_est,
-                        max_tokens=self.model_cfg.get("max_tokens"),
-                        model="openrouter/auto",
-                        temperature=self.model_cfg.get("temperature"),
-                        top_p=self.model_cfg.get("top_p"),
-                        stop=stops,
-                        context_fields={"channel": cid, "user": "batch", "correlation": correlation_id},
-                    )
-                    reply = result.get("text") if isinstance(result, dict) else result
-                    dur_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
-                    usage = (result or {}).get("usage") if isinstance(result, dict) else None
-                    if usage and (usage.get("input_tokens") is not None or usage.get("output_tokens") is not None):
-                        self.log.info(
-                            f"[llm-finish]{fmt('channel', cid)} {fmt('user', 'batch')} {fmt('model', 'openrouter/auto')} {fmt('duration_ms', dur_ms)} "
-                            f"{fmt('tokens_in', usage.get('input_tokens','NA'))} {fmt('tokens_out', usage.get('output_tokens','NA'))} {fmt('total_tokens', usage.get('total_tokens','NA'))} "
-                            f"{fmt('correlation', correlation_id)}"
-                        )
-                    else:
-                        self.log.info(
-                            f"[llm-finish] {fmt('channel', cid)} {fmt('user', 'batch')} {fmt('model', 'openrouter/auto')} {fmt('duration_ms', dur_ms)} {fmt('correlation', correlation_id)}"
-                        )
-                except Exception as e2:
-                    self.log.error(f"LLM auto fallback error: {e2}")
-
-            return reply
-        except Exception as e:  # noqa
-            self.log.error(f"Batch handling error for channel {cid}: {e}")
-            return None
+                reply = result.get('text') if isinstance(result, dict) else result
+                usage = (result or {}).get('usage') if isinstance(result, dict) else None
+                dur_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
+                if usage and (usage.get('input_tokens') is not None or usage.get('output_tokens') is not None):
+                    self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('duration_ms', dur_ms)} {fmt('tokens_in', usage.get('input_tokens','NA'))} {fmt('tokens_out', usage.get('output_tokens','NA'))} {fmt('total_tokens', usage.get('total_tokens','NA'))} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
+                else:
+                    self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('duration_ms', dur_ms)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
+                break
+            except Exception as e:
+                self.log.error(f"LLM error with {model_name}: {e}")
+                reply = None
+        if reply is None and allow_auto:
+            try:
+                start_ts = datetime.now(timezone.utc)
+                result = await self.llm.generate_chat(
+                    messages,
+                    max_tokens=self.model_cfg.get('max_tokens'),
+                    model='openrouter/auto',
+                    temperature=self.model_cfg.get('temperature'),
+                    top_p=self.model_cfg.get('top_p'),
+                    stop=stops,
+                    context_fields={'channel': cid, 'user': 'batch', 'correlation': correlation_id},
+                )
+                reply = result.get('text') if isinstance(result, dict) else result
+                dur_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
+                self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model','openrouter/auto')} {fmt('duration_ms', dur_ms)} {fmt('correlation', correlation_id)}")
+            except Exception as e2:
+                self.log.error(f"LLM auto fallback error: {e2}")
+        return reply

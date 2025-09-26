@@ -80,6 +80,10 @@ class ParticipationPolicy:
     def set_window_size(self, n: int) -> None:
         self._window_size = int(n)
 
+    # New helper: channel with forced general chat override (100% chance & unlimited conv-mode budget)
+    def is_response_chance_override(self, channel_id: str) -> bool:
+        return channel_id in getattr(self, "response_chance_override_channels", set())
+
     def _log_decision(self, event: dict, allow: bool, reason: str, style: str | None = None) -> None:
         try:
             channel = event.get("channel_name") or event.get("channel_id")

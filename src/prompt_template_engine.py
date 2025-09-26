@@ -36,10 +36,8 @@ class PromptTemplateEngine:
         except Exception:
             pass
 
-    def build_system_message(self) -> str:
-        # Reload templates if files changed
-        self._maybe_reload_templates()
-        # Hot-apply template path changes from config without restart
+    def _hot_reload_config_paths(self):
+        # Hot-apply template path changes from config without restart (base system + context)
         try:
             from .config_service import ConfigService
             cfg = ConfigService("config.yaml")
@@ -47,7 +45,6 @@ class PromptTemplateEngine:
             new_context = cfg.context_template_path()
             if new_system and str(new_system) != str(getattr(self, "_system_path", "")):
                 self._system_path = str(new_system)
-                # Force reload on next check
                 self._sys_mtime_ns = -1
                 self._maybe_reload_templates()
             if new_context and str(new_context) != str(getattr(self, "_context_path", "")):
@@ -56,6 +53,32 @@ class PromptTemplateEngine:
                 self._maybe_reload_templates()
         except Exception:
             pass
+
+    def _maybe_apply_nsfw_override(self, is_nsfw: bool) -> None:
+        if not is_nsfw:
+            return
+        try:
+            from .config_service import ConfigService
+            cfg = ConfigService("config.yaml")
+            nsfw_path = cfg.system_prompt_path_nsfw()
+            if nsfw_path and str(nsfw_path) != str(getattr(self, "_system_path", "")):
+                p = Path(nsfw_path)
+                if p.exists():
+                    self._system_path = str(nsfw_path)
+                    self._sys_mtime_ns = -1
+                    self._maybe_reload_templates()
+                    from .logger_factory import get_logger
+                    get_logger("PromptTemplate").debug(f"[prompt-select] nsfw=true path={nsfw_path}")
+        except Exception:
+            pass
+
+    def build_system_message_for(self, is_nsfw: bool = False) -> str:
+        # Reload templates if files changed
+        self._maybe_reload_templates()
+        # Hot reload base paths
+        self._hot_reload_config_paths()
+        # Apply NSFW override if needed
+        self._maybe_apply_nsfw_override(is_nsfw=is_nsfw)
         # Hot-apply persona path changes from config without restart
         try:
             from .config_service import ConfigService
@@ -70,11 +93,14 @@ class PromptTemplateEngine:
         persona_block = self.persona.body()
         return f"{self.system_prompt}\n\n[Persona]\n{persona_block}"
 
+    # Backwards compatibility: existing callers
+    def build_system_message(self) -> str:  # pragma: no cover - thin wrapper
+        return self.build_system_message_for(is_nsfw=False)
+
     def render(self, conversation_window, user_input: str, summary: str | None = None) -> str:
-        # Build a context block with buckets: last user message, recent (<=10m), older (>10m)
+        # Build a context block with buckets: last user message, recent (<= recency window), older (> window)
         from datetime import datetime, timedelta, timezone
         now = datetime.now(timezone.utc)
-        # Allow config-driven recency window
         try:
             from .config_service import ConfigService
             cfg = ConfigService("config.yaml")
@@ -99,8 +125,7 @@ class PromptTemplateEngine:
                 dt = datetime.fromisoformat(ts) if ts else None
             except Exception:
                 dt = None
-            bucket = recent_messages if (dt and dt >= cutoff) else older_messages
-            bucket.append(m)
+            (recent_messages if (dt and dt >= cutoff) else older_messages).append(m)
 
         tmpl = self.env.from_string(self.context_template or "{{''}}")
         ctx = {
@@ -111,4 +136,7 @@ class PromptTemplateEngine:
             "summary": summary or "",
         }
         context_block = tmpl.render(**ctx)
-        return f"{self.build_system_message()}\n\n{context_block}" if context_block else self.build_system_message()
+        base = self.build_system_message_for(is_nsfw=False)
+        if context_block:
+            return f"{base}\n\n{context_block}"
+        return base

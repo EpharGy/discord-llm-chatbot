@@ -54,6 +54,11 @@ class ConfigService:
         self._maybe_reload()
         return str(self.context().get("system_prompt_path", "prompts/system.txt"))
 
+    def system_prompt_path_nsfw(self) -> str | None:
+        self._maybe_reload()
+        v = self.context().get("system_prompt_path_nsfw")
+        return str(v) if v else None
+
     def context_template_path(self) -> str:
         self._maybe_reload()
         return str(self.context().get("context_template_path", "prompts/context_template.txt"))
@@ -169,10 +174,17 @@ class ConfigService:
         v = self._cfg.raw.get("LOG_PROMPTS", False)
         return bool(v)
 
-    def log_errors(self) -> bool:
+    def log_to_output(self) -> bool:
+        """Return whether to write full application logs to logs/log.log.
+
+        New key: LOG_TO_OUTPUT (bool). For backward compatibility, also honor
+        legacy LOG_ERRORS if present.
+        """
         self._maybe_reload()
-        v = self._cfg.raw.get("LOG_ERRORS", False)
-        return bool(v)
+        if "LOG_TO_OUTPUT" in self._cfg.raw:
+            return bool(self._cfg.raw.get("LOG_TO_OUTPUT", False))
+        # Fallback legacy
+        return bool(self._cfg.raw.get("LOG_ERRORS", False))
 
     def max_context_tokens(self) -> int:
         """Total model context window (tokens) for prompt + completion)."""
