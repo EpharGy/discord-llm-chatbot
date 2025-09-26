@@ -629,11 +629,20 @@ class MessageRouter:
                     continue
                 try:
                     start_ts = datetime.now(timezone.utc)
+                    # Detect NSFW for logging context
+                    try:
+                        _nsfw_flag = False
+                        ch = getattr(message, 'channel', None)
+                        if ch is not None:
+                            _nsfw_flag = bool(getattr(ch, 'nsfw', False)) or bool(getattr(getattr(ch, 'parent', None), 'nsfw', False))
+                    except Exception:
+                        _nsfw_flag = False
                     line = (
                         f"[llm-start] "
                         f"{fmt('channel', event.get('channel_name', event['channel_id']))} "
                         f"{fmt('user', event.get('author_name'))} "
                         f"{fmt('model', model_name)} "
+                        f"{fmt('nsfw', _nsfw_flag)} "
                         f"{fmt('has_images', has_images)} "
                         + (f" {fmt('image_count', len(image_urls))}" if has_images else "") + " "
                         f"{fmt('fallback_index', idx)} "
@@ -716,6 +725,7 @@ class MessageRouter:
                             f"{fmt('user', event.get('author_name'))} "
                             f"{fmt('model', model_name)} "
                             f"{fmt('duration_ms', dur_ms)} "
+                            f"{fmt('nsfw', _nsfw_flag)} "
                             f"{fmt('has_images', has_images)} "
                             + (f" {fmt('image_count', len(image_urls))}" if has_images else "") + " "
                             f"{fmt('tokens_in', usage.get('input_tokens','NA'))} "
@@ -731,6 +741,7 @@ class MessageRouter:
                             f"{fmt('user', event.get('author_name'))} "
                             f"{fmt('model', model_name)} "
                             f"{fmt('duration_ms', dur_ms)} "
+                            f"{fmt('nsfw', _nsfw_flag)} "
                             f"{fmt('has_images', has_images)} "
                             + (f" {fmt('image_count', len(image_urls))}" if has_images else "") + " "
                             f"{fmt('fallback_index', idx)} "
@@ -1083,6 +1094,12 @@ class MessageRouter:
         except Exception:
             pass
         # Model loop
+        _nsfw_batch = False
+        try:
+            if channel is not None:
+                _nsfw_batch = bool(getattr(channel, 'nsfw', False)) or bool(getattr(getattr(channel, 'parent', None), 'nsfw', False))
+        except Exception:
+            _nsfw_batch = False
         cfg_models = self.model_cfg.get('models')
         if isinstance(cfg_models, str):
             models_to_try = [m.strip() for m in cfg_models.split(',') if m.strip()]
@@ -1099,7 +1116,14 @@ class MessageRouter:
                 continue
             try:
                 start_ts = datetime.now(timezone.utc)
-                self.log.info(f"[llm-start] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
+                # Batch nsfw detection comes from earlier is_nsfw used to build system message
+                _nsfw_batch = False
+                try:
+                    if channel is not None:
+                        _nsfw_batch = bool(getattr(channel, 'nsfw', False)) or bool(getattr(getattr(channel, 'parent', None), 'nsfw', False))
+                except Exception:
+                    _nsfw_batch = False
+                self.log.info(f"[llm-start] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('nsfw', _nsfw_batch)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
                 result = await self.llm.generate_chat(
                     messages,
                     max_tokens=self.model_cfg.get('max_tokens'),
@@ -1113,15 +1137,16 @@ class MessageRouter:
                 usage = (result or {}).get('usage') if isinstance(result, dict) else None
                 dur_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
                 if usage and (usage.get('input_tokens') is not None or usage.get('output_tokens') is not None):
-                    self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('duration_ms', dur_ms)} {fmt('tokens_in', usage.get('input_tokens','NA'))} {fmt('tokens_out', usage.get('output_tokens','NA'))} {fmt('total_tokens', usage.get('total_tokens','NA'))} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
+                    self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('tokens_in', usage.get('input_tokens','NA'))} {fmt('tokens_out', usage.get('output_tokens','NA'))} {fmt('total_tokens', usage.get('total_tokens','NA'))} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
                 else:
-                    self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('duration_ms', dur_ms)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
+                    self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
                 break
             except Exception as e:
                 self.log.error(f"LLM error with {model_name}: {e}")
                 reply = None
         if reply is None and allow_auto:
             try:
+                _nsfw_batch = False if ' _nsfw_batch' not in locals() else _nsfw_batch
                 start_ts = datetime.now(timezone.utc)
                 result = await self.llm.generate_chat(
                     messages,
@@ -1134,7 +1159,7 @@ class MessageRouter:
                 )
                 reply = result.get('text') if isinstance(result, dict) else result
                 dur_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
-                self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model','openrouter/auto')} {fmt('duration_ms', dur_ms)} {fmt('correlation', correlation_id)}")
+                self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model','openrouter/auto')} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('correlation', correlation_id)}")
             except Exception as e2:
                 self.log.error(f"LLM auto fallback error: {e2}")
         return reply
