@@ -1,15 +1,15 @@
 [Conversation Summary]
 {{ summary | default('') }}
 
-[Last User Message]
-- ({{ last_user.timestamp_iso }}) {{ last_user.author }}: {{ last_user.content }}
+[Older Messages (>10m)]
+{% for m in older_messages %}
+- ({{ m.timestamp_iso }}) {{ m.author }} [{{ m.role }}]: {{ m.content }}
+{% endfor %}
 
 [Recent Messages (<=10m)]
 {% for m in recent_messages %}
 - ({{ m.timestamp_iso }}) {{ m.author }} [{{ m.role }}]: {{ m.content }}
 {% endfor %}
 
-[Older Messages (>10m)]
-{% for m in older_messages %}
-- ({{ m.timestamp_iso }}) {{ m.author }} [{{ m.role }}]: {{ m.content }}
-{% endfor %}
+[Last User Message]
+- ({{ last_user.timestamp_iso }}) {{ last_user.author }}: {{ last_user.content }}

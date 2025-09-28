@@ -136,7 +136,7 @@ class PromptTemplateEngine:
             "summary": summary or "",
         }
         context_block = tmpl.render(**ctx)
-        base = self.build_system_message_for(is_nsfw=False)
-        if context_block:
-            return f"{base}\n\n{context_block}"
-        return base
+        # Important: Do NOT include the system/persona here; MessageRouter already adds the
+        # base system message separately. Returning only the context block avoids duplication
+        # in outgoing prompts and keeps configuration behavior consistent.
+        return context_block or ""

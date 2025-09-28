@@ -514,8 +514,20 @@ class MessageRouter:
         # If using template, render a context block and attach as an extra system message (after lore)
         if use_tmpl:
             context_block = self.tmpl.render(conversation_window=structured_msgs, user_input=event['content'], summary=None)
-            system_ctx = {"role": "system", "content": context_block}
-            messages_for_est.append(system_ctx)
+            # Guard against accidental duplication: if the rendered block somehow contains
+            # the base system/persona text, strip everything before the first context marker.
+            try:
+                if isinstance(context_block, str):
+                    markers = ["[Conversation Summary]", "[Last User Message]", "[Recent Messages", "[Older Messages"]
+                    idxs = [context_block.find(m) for m in markers if m in context_block]
+                    first_idx = min(idxs) if idxs else -1
+                    if first_idx > 0:
+                        context_block = context_block[first_idx:]
+            except Exception:
+                pass
+            if context_block:
+                system_ctx = {"role": "system", "content": context_block}
+                messages_for_est.append(system_ctx)
 
         # Vision single-pass: if enabled, scope allows, and images present, convert user content to multimodal parts
         has_images = False
@@ -1071,6 +1083,13 @@ class MessageRouter:
         if use_tmpl:
             try:
                 context_block = self.tmpl.render(conversation_window=structured, user_input=batch_text, summary=None)
+                # Guard against accidental duplication; trim any prefix before context markers
+                if isinstance(context_block, str):
+                    markers = ["[Conversation Summary]", "[Last User Message]", "[Recent Messages", "[Older Messages"]
+                    idxs = [context_block.find(m) for m in markers if m in context_block]
+                    first_idx = min(idxs) if idxs else -1
+                    if first_idx > 0:
+                        context_block = context_block[first_idx:]
                 if context_block:
                     system_blocks.append({'role': 'system', 'content': context_block})
             except Exception:
