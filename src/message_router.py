@@ -118,6 +118,63 @@ class MessageRouter:
             tokens_after = -1
         return messages, tokens_before, tokens_after
 
+    # ------------------------------------------------------------------
+    # Small helpers to simplify handle_message
+    # ------------------------------------------------------------------
+    def _resolve_names(self, message) -> tuple[str, str]:
+        try:
+            channel_name = getattr(message.channel, "name", None) or str(message.channel.id)
+        except Exception:
+            channel_name = str(getattr(message.channel, "id", "unknown"))
+        try:
+            guild_name = getattr(message.guild, "name", None) or ("DM" if getattr(message.channel, "type", None) and str(message.channel.type).lower().endswith("dm") else "unknown")
+        except Exception:
+            guild_name = "unknown"
+        return channel_name, guild_name
+
+    def _get_bot_id(self, message):
+        bot_id = None
+        try:
+            if message.client and message.client.user:
+                bot_id = message.client.user.id
+        except Exception:
+            bot_id = getattr(getattr(message.guild, "me", None), "id", None)
+        return bot_id
+
+    def _populate_reply_metadata(self, event: dict, message, bot_id) -> None:
+        event["is_reply"] = bool(message.reference and getattr(message.reference, "message_id", None))
+        event["is_reply_to_bot"] = False
+        if not event["is_reply"]:
+            return
+        try:
+            ref = message.reference
+            parent = getattr(ref, "resolved", None) or getattr(ref, "cached_message", None)
+            if isinstance(parent, discord.Message):
+                event["reply_to_author_id"] = str(parent.author.id)
+                event["reply_to_is_bot"] = bool(getattr(parent.author, "bot", False))
+                event["reply_to_message_content"] = parent.content or ""
+                event["reply_to_author_name"] = getattr(parent.author, "display_name", None) or ("bot" if getattr(parent.author, "bot", False) else "user")
+                if bot_id and parent.author.id == bot_id:
+                    event["is_reply_to_bot"] = True
+        except Exception:
+            pass
+
+    def _maybe_enqueue_for_batch(self, event: dict, message, is_direct: bool, allowed_channel: bool) -> bool:
+        try:
+            if self.batcher and self.memory.conversation_mode_active(event["channel_id"]) and not event.get("is_mentioned", False):
+                if allowed_channel or event.get("is_reply"):
+                    if not (is_direct or allowed_channel):
+                        self.memory.record(event)
+                    try:
+                        self.batcher.add(event["channel_id"], event)
+                        self.log.debug(f"batch-enqueue {fmt('channel', event.get('channel_name', event['channel_id']))} {fmt('msg', event.get('message_id',''))}")
+                    except Exception:
+                        pass
+                    return True
+        except Exception:
+            pass
+        return False
+
     def _split_for_discord(self, text: str) -> list[str]:
         # Split into at most config.max_response_messages parts, respecting discord.message_char_limit
         try:
@@ -170,14 +227,7 @@ class MessageRouter:
 
     async def handle_message(self, message):
         # Resolve channel/guild display names (prefer names, fallback to IDs)
-        try:
-            channel_name = getattr(message.channel, "name", None) or str(message.channel.id)
-        except Exception:
-            channel_name = str(getattr(message.channel, "id", "unknown"))
-        try:
-            guild_name = getattr(message.guild, "name", None) or ("DM" if getattr(message.channel, "type", None) and str(message.channel.type).lower().endswith("dm") else "unknown")
-        except Exception:
-            guild_name = "unknown"
+        channel_name, guild_name = self._resolve_names(message)
         event = {
             "channel_id": str(message.channel.id),
             "channel_name": channel_name,
@@ -192,34 +242,13 @@ class MessageRouter:
         }
 
         # Determine bot user id
-        bot_id = None
-        try:
-            if message.client and message.client.user:
-                bot_id = message.client.user.id
-        except Exception:
-            bot_id = getattr(getattr(message.guild, "me", None), "id", None)
+        bot_id = self._get_bot_id(message)
 
         # Mentions
         event["is_mentioned"] = bool(bot_id and any(mid == bot_id for mid in event["mentions"]))
 
         # Reply metadata
-        event["is_reply"] = bool(message.reference and getattr(message.reference, "message_id", None))
-        event["is_reply_to_bot"] = False
-        if event["is_reply"]:
-            parent = None
-            ref = message.reference
-            # Prefer cached resolved message to avoid network calls
-            parent = getattr(ref, "resolved", None) or getattr(ref, "cached_message", None)
-            if isinstance(parent, discord.Message):
-                try:
-                    event["reply_to_author_id"] = str(parent.author.id)
-                    event["reply_to_is_bot"] = bool(getattr(parent.author, "bot", False))
-                    event["reply_to_message_content"] = parent.content or ""
-                    event["reply_to_author_name"] = getattr(parent.author, "display_name", None) or ("bot" if getattr(parent.author, "bot", False) else "user")
-                    if bot_id and parent.author.id == bot_id:
-                        event["is_reply_to_bot"] = True
-                except Exception:
-                    pass
+        self._populate_reply_metadata(event, message, bot_id)
 
         # Determine direct message trigger by name/mention
         content_lower = (event.get("content") or "").lower()
@@ -231,28 +260,12 @@ class MessageRouter:
         # Record only if allowed channel for general chat OR it's a direct trigger
         if is_direct or allowed_channel:
             self.memory.record(event)
+        if self._maybe_enqueue_for_batch(event, message, is_direct, allowed_channel):
+            return
 
         # Correlation id ties decision → LLM call → send
         correlation_id = make_correlation_id(event['channel_id'], getattr(message, 'id', 'msg'))
-
         event["correlation"] = correlation_id
-        # Guard: do not respond twice to the same message id
-        try:
-            if self.memory.has_responded_to(event["channel_id"], event.get("message_id")):
-                self.log.debug(f"skip-duplicate {fmt('channel', event.get('channel_name', event['channel_id']))} {fmt('msg', getattr(message, 'id', ''))}")
-                return
-        except Exception:
-            pass
-        # Hot-apply dynamic aliases from config to policy before deciding
-        try:
-            from .config_service import ConfigService
-            cfg = ConfigService("config.yaml")
-            part = cfg.participation()
-            if "name_aliases" in part:
-                # Normalize to lower-case set
-                self.policy.aliases = set(a.lower() for a in part.get("name_aliases", []) if isinstance(a, str))
-        except Exception:
-            pass
 
         decision = self.policy.should_reply(event, self.memory)
         # Conversation mode: if a window is active in this channel, auto-allow up to a message budget

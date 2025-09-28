@@ -2,40 +2,6 @@
 
 Date: 2025-09-19
 
-## 1) Vision (VLM) Support
-
-Goal: Allow the bot to include image context (attachments and linked URLs) alongside text in prompts when using vision-capable models.
-
-Proposed design:
-
-- Config
-  - `vision.enabled: false`
-  - `vision.max_images: 3`
-- Prompt Composition
-  - Single-message: extract attachments (image/*) and URLs ending with `.png/.jpg/.jpeg/.gif/.webp`.
-  - Batch: conservative first pass — include image URLs found in the last event’s text.
-  - Compose multimodal content as parts: `[ {type: "text", text: "..."}, {type: "image_url", image_url: {url: "..."}}, ... ]`.
-- Token Budgeting
-  - Heuristic token estimate per image (e.g., 64) + normal text estimation.
-  - Truncate only text parts last.
-- Model Capability
-  - Gate vision by config; later auto-detect model capability or map by slug.
-
-Tasks:
-
-- [ ] Config: add `vision` keys and getters.
-- [ ] Message parsing: attachment + URL extraction helpers.
-- [ ] Prompt composer: build multimodal user content (single + batch paths).
-- [ ] Tokenizer: support parts list and truncation for text only.
-- [ ] Testing: smoke with a VLM-capable model; verify no regressions when disabled.
-- [ ] Docs: add short section in README/ROADMAP.
-
-Acceptance Criteria:
-
-- When `vision.enabled=true` and images present, request payloads include image_url parts.
-- With `vision.enabled=false`, behavior remains unchanged.
-- No errors when images are missing or in unsupported formats.
-
 ## 2) Alternate Model Servers
 
 Goal: Support different backends beyond OpenRouter, including self-hosted or local engines.
