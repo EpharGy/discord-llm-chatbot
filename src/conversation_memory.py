@@ -107,3 +107,23 @@ class ConversationMemory:
             else:
                 break
         return cnt
+
+    def clear(self, channel_id: str) -> None:
+        """Clear all stored state for a channel (history, cooldowns, conv-mode, responded ids)."""
+        try:
+            # Clear message history
+            if channel_id in self.store:
+                self.store[channel_id].clear()
+            # Cooldown/last reply and reply timestamps
+            self.last_reply.pop(channel_id, None)
+            if channel_id in self.replies_timestamps:
+                self.replies_timestamps[channel_id].clear()
+            # Conversation mode
+            self.conv_until.pop(channel_id, None)
+            self.conv_budget.pop(channel_id, None)
+            # Responded message ids
+            if channel_id in self.responded_to:
+                self.responded_to[channel_id].clear()
+        except Exception:
+            # Be resilient; do not raise on clear failures
+            pass

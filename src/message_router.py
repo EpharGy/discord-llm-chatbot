@@ -1017,8 +1017,8 @@ class MessageRouter:
                 if not self.memory.consume_conversation_message(cid):
                     self.log.debug(f"[batch-skip] budget_exhausted channel={cid} events={len(events)}")
                     return None
-        # Aggregate user batch text
-        batch_text = "\n".join(f"[{e.get('author_name') or 'user'}] {e.get('content') or ''}" for e in events)
+        # Aggregate user batch text (content only) to reduce false matches on author names
+        batch_text = "\n".join((e.get('content') or '') for e in events)
         # NSFW system selection
         is_nsfw = False
         try:
@@ -1081,7 +1081,8 @@ class MessageRouter:
             try:
                 lore_fraction = float(self.lore_cfg.get('max_fraction', 0.33))
                 lore_budget = max(1, int(prompt_budget * lore_fraction))
-                corpus = "\n".join([f"{m.get('author')}: {m.get('content')}" for m in structured] + [batch_text])
+                # Build corpus from message content only (exclude author names to avoid spurious key hits like 'You')
+                corpus = "\n".join([m.get('content','') for m in structured] + [batch_text])
                 lore_text = builder(corpus_text=corpus, max_tokens=lore_budget, tokenizer=self.tok, logger=self.log)
                 if lore_text:
                     system_blocks.append({'role': 'system', 'content': 'You may use the following background context if it is relevant to the user’s request.\n' + lore_text})
@@ -1166,6 +1167,30 @@ class MessageRouter:
                     context_fields={'channel': cid, 'user': 'batch', 'correlation': correlation_id},
                 )
                 reply = result.get('text') if isinstance(result, dict) else result
+                # Optional prompt/response logging to files for batch/web mode
+                try:
+                    from .config_service import ConfigService
+                    cfg = ConfigService('config.yaml')
+                    if bool(cfg.log_prompts()):
+                        ts_dir = dt.now().strftime('prompts-%Y%m%d-%H%M%S')
+                        out_dir = Path('logs') / ts_dir
+                        out_dir.mkdir(parents=True, exist_ok=True)
+                        import json
+                        p = {
+                            'correlation': correlation_id,
+                            'channel': cid,
+                            'user': 'batch',
+                            'model': model_name,
+                            'messages': messages,
+                        }
+                        (out_dir / 'prompt.json').write_text(json.dumps(p, ensure_ascii=False, indent=2), encoding='utf-8')
+                        lines = []
+                        for m in messages:
+                            lines.append(f"[{m.get('role','')}] {m.get('content','')}")
+                        (out_dir / 'prompt.txt').write_text("\n\n".join(lines), encoding='utf-8')
+                        (out_dir / 'response.txt').write_text(str(reply or ''), encoding='utf-8')
+                except Exception:
+                    pass
                 usage = (result or {}).get('usage') if isinstance(result, dict) else None
                 dur_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
                 if usage and (usage.get('input_tokens') is not None or usage.get('output_tokens') is not None):

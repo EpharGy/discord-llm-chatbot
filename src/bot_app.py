@@ -84,16 +84,25 @@ async def main() -> None:
         },
     )
 
+    # Determine run mode: DISCORD | WEB | BOTH
+    mode = config.bot_method()
+    port = config.html_port()
+    host = config.html_host()
+    # Prepare optional Discord client
     token = os.getenv("DISCORD_TOKEN")
-    if not token:
-        raise RuntimeError("Missing DISCORD_TOKEN in environment")
-
-    intents_cfg = config.discord_intents()
-    client = DiscordClientAdapter(router=router, intents_cfg=intents_cfg, logger=get_logger("Discord"))
+    client = None
+    if mode in ("DISCORD", "BOTH"):
+        if not token:
+            raise RuntimeError("Missing DISCORD_TOKEN in environment")
+        intents_cfg = config.discord_intents()
+        client = DiscordClientAdapter(router=router, intents_cfg=intents_cfg, logger=get_logger("Discord"))
 
     async def process_mentions_loop():
         while True:
             try:
+                if client is None:
+                    await asyncio.sleep(2)
+                    continue
                 for cid in queue.channels():
                     if memory.responses_in_window(cid, policy.window_seconds) < policy.max_responses:
                         item = queue.pop(cid)
@@ -124,8 +133,9 @@ async def main() -> None:
                     # Fetch channel for NSFW detection
                     channel_obj = None
                     try:
-                        import discord
-                        channel_obj = await client.fetch_channel(int(ch_id))
+                        if client is not None:
+                            import discord
+                            channel_obj = await client.fetch_channel(int(ch_id))
                     except Exception:
                         channel_obj = None
                     if active:
@@ -186,12 +196,26 @@ async def main() -> None:
                 pass
             await asyncio.sleep(max(1, int(batch_interval)))
 
-    logger.info("Starting Discord bot…")
-    await asyncio.gather(
-        client.start(token),
-        process_mentions_loop(),
-        process_batches_loop(),
-    )
+    # Build run tasks based on mode
+    tasks: list = []
+    server = None
+    if mode in ("WEB", "BOTH"):
+        from .http_app import create_app
+        import uvicorn
+        app = create_app()
+        config_uv = uvicorn.Config(app, host=host, port=port, log_level="info")
+        server = uvicorn.Server(config_uv)
+        tasks.append(server.serve())
+        logger.info(f"Web server: http://{host}:{port}")
+    if mode in ("DISCORD", "BOTH") and client is not None and token:
+        tasks.extend([client.start(token), process_mentions_loop(), process_batches_loop()])
+        logger.info("Discord bot starting…")
+
+    if not tasks:
+        logger.info("No run tasks scheduled (check bot_type.method). Exiting.")
+        return
+
+    await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":

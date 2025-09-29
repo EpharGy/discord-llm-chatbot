@@ -1,8 +1,18 @@
+bot_type:
+  method: BOTH  # "DISCORD", "WEB",or "BOTH". If "WEB" or "BOTH", ensure to set a valid port below.
+
+# HTTP server auth (optional, required if bot_type is WEB or BOTH)
+http:
+  html_port: 8005
+  html_host: 0.0.0.0  # Bind host for the web server (default 127.0.0.1; set 0.0.0.0 to expose on LAN)
+  bearer_token: "abc"  # When set, required on /chat (and may be applied to /reset). Leave blank to disable.
+  
 LOG_LEVEL: INFO  # INFO, DEBUG, FULL - INFO: standard levels; DEBUG adds more detail; FULL includes full request/response bodies (no secrets)
 LIB_LOG_LEVEL: WARNING  # Controls verbosity of third-party libs (discord/httpx/httpcore). Typical: WARNING or ERROR; set DEBUG for deep library tracing.
 LOG_PROMPTS: false  # if true, prompt and response text are saved as files in logs/prompts-YYYYMMDD-HHMMSS for debugging; may include sensitive info so use with caution
 LOG_ERRORS: true # if true, errors are logged to logs/errors.log for debugging
 
+# Openrouter configuration - get API key from https://openrouter.ai/ add into .env
 model:
   provider: openrouter
   temperature: 0.6  # temperature controls randomness of output (0.0 = deterministic, 1.0 = very random)
@@ -35,6 +45,24 @@ model:
     - "<｜end▁of▁sentence｜>" # End of message token for DeepSeek models
     - "<end_of_turn>" # End of message for Gemma models
 
+vision:
+  enabled: true
+  max_images: 4
+  models:
+    - x-ai/grok-4-fast:free
+    - google/gemini-2.0-flash-exp:free
+    - meta-llama/llama-4-scout:free
+    - meta-llama/llama-4-scout
+  mode: single-pass
+  retry_on_image_count_error: true
+  fallback_to_text: true
+  apply_in:
+    mentions: true
+    replies: true
+    general_chat: true
+    batch: true
+  log_image_urls: false
+  timeout_multiplier: 1.5
 
 rate_limits:
   # Anti-spam: hard cap per channel to avoid flooding LLM calls

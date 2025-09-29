@@ -186,6 +186,44 @@ class ConfigService:
         # Fallback legacy
         return bool(self._cfg.raw.get("LOG_ERRORS", False))
 
+    # Bot run mode (Discord/Web/Both)
+    def bot_method(self) -> str:
+        self._maybe_reload()
+        v = str(self._cfg.raw.get("bot_type", {}).get("method", "DISCORD")).upper()
+        if v not in ("DISCORD", "WEB", "BOTH"):
+            return "DISCORD"
+        return v
+
+    def html_port(self) -> int:
+        self._maybe_reload()
+        try:
+            # Prefer new location under http.html_port; fallback to legacy bot_type.html_port
+            if "http" in self._cfg.raw and isinstance(self._cfg.raw.get("http"), dict):
+                return int(self._cfg.raw.get("http", {}).get("html_port", 8005))
+            return int(self._cfg.raw.get("bot_type", {}).get("html_port", 8005))
+        except Exception:
+            return 8005
+
+    def html_host(self) -> str:
+        """Host interface for the HTTP server. Default to 127.0.0.1 (safe)."""
+        self._maybe_reload()
+        http_cfg = self._cfg.raw.get("http", {}) if isinstance(self._cfg.raw.get("http"), dict) else {}
+        v = http_cfg.get("html_host")
+        if not v:
+            v = self._cfg.raw.get("bot_type", {}).get("html_host")
+        return str(v) if v else "127.0.0.1"
+
+    def http_auth_bearer_token(self) -> str | None:
+        """Optional bearer token for HTTP endpoints; when set, required on protected routes."""
+        self._maybe_reload()
+        http_cfg = self._cfg.raw.get("http", {}) if isinstance(self._cfg.raw.get("http"), dict) else {}
+        v = http_cfg.get("bearer_token")
+        if not v and isinstance(http_cfg.get("auth"), dict):
+            # Backward compatibility for http.auth.bearer_token
+            v = http_cfg.get("auth", {}).get("bearer_token")
+        v = str(v).strip() if v else None
+        return v or None
+
     def max_context_tokens(self) -> int:
         """Total model context window (tokens) for prompt + completion)."""
         self._maybe_reload()
