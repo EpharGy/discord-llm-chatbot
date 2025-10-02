@@ -4,7 +4,9 @@
   var msgEl = $('msg');
   var btnEl = $('sendBtn');
   var nameEl = $('name');
+  var themeToggleEl = $('themeToggle');
   var resetEl = $('resetBtn');
+  var jumpEl = $('jumpBtn');
   var bot = 'Bot';
   var defaultUser = 'You';
   var statusEl = $('status');
@@ -14,6 +16,8 @@
   var tokenEl = $('token');
   var tokenRequired = false;
   var LS_KEY = 'webchat.bearer_token';
+  var LS_NAME = 'webchat.name';
+  var LS_THEME = 'webchat.theme';
   function setStatus(t){ if(statusEl){ statusEl.textContent = t || ''; } }
   function scroll(){ if (logEl) { logEl.scrollTop = logEl.scrollHeight; } }
   function escapeHtml(s){ return s.replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]); }); }
@@ -26,19 +30,19 @@
     out = out.replace(/(\*|_)([^\*_][\s\S]*?)\1/g, '<em>$2</em>');
     // inline code `code`
     out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
-    // links [text](url)
-    out = out.replace(/\[([^\]]+)\]\(([^\)]+)\)/g, function(_, text, url){
-      var t = escapeHtml(text || '');
-      var u = (url || '').trim();
-      if (!isSafeUrl(u)) return t;
-      return '<a href="' + u + '" target="_blank" rel="noopener noreferrer">' + t + '</a>';
-    });
     // images ![alt](url)
     out = out.replace(/!\[([^\]]*)\]\(([^\)]+)\)/g, function(_, alt, url){
       var a = escapeHtml(alt || '');
       var u = (url || '').trim();
       if (!isSafeUrl(u)) return '<span>[image blocked: unsafe url]</span>';
       return '<img alt="' + a + '" src="' + u + '">';
+    });
+    // links [text](url)
+    out = out.replace(/\[([^\]]+)\]\(([^\)]+)\)/g, function(_, text, url){
+      var t = escapeHtml(text || '');
+      var u = (url || '').trim();
+      if (!isSafeUrl(u)) return t;
+      return '<a href="' + u + '" target="_blank" rel="noopener noreferrer">' + t + '</a>';
     });
     return out;
   }
@@ -89,10 +93,37 @@
   .then(function(json){ if (!json) return; append('\n' + user + ': ' + content + '\n\n' + bot + ': ' + (json.reply ? json.reply : '(no reply)') + '\n'); if (msgEl) msgEl.value = ''; setStatus('Ready for new Message.'); })
       .catch(function(e){ append('Error: ' + e + '\n'); setStatus('Ready for new Message.'); });
   }
+  function autoGrow(){
+    if (!msgEl) return;
+    msgEl.style.height = 'auto';
+    msgEl.style.height = Math.min(msgEl.scrollHeight, 160) + 'px';
+  }
   function bind(){
   if (btnEl) btnEl.addEventListener('click', send);
-    if (msgEl) msgEl.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); send(); }});
-    if (nameEl) nameEl.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); if (msgEl) msgEl.focus(); }});
+    if (msgEl) {
+      msgEl.addEventListener('keydown', function(e){
+        if (e.key === 'Enter') {
+          if (e.shiftKey) { return; } // allow newline
+          e.preventDefault();
+          send();
+          return;
+        }
+      });
+      msgEl.addEventListener('input', autoGrow);
+      setTimeout(autoGrow, 0);
+    }
+    if (nameEl) {
+      nameEl.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); if (msgEl) msgEl.focus(); }});
+      try { var savedName = localStorage.getItem(LS_NAME); if (savedName && !nameEl.value) nameEl.value = savedName; } catch(_) {}
+      nameEl.addEventListener('change', function(){ try { if (nameEl.value) localStorage.setItem(LS_NAME, nameEl.value); else localStorage.removeItem(LS_NAME);} catch(_) {} });
+    }
+    if (themeToggleEl) {
+      themeToggleEl.addEventListener('click', function(){
+        var dark = document.body.classList.toggle('dark');
+        try { localStorage.setItem(LS_THEME, dark ? 'dark' : 'light'); } catch(_) {}
+      });
+      try { var pref = localStorage.getItem(LS_THEME); if (pref === 'dark') document.body.classList.add('dark'); } catch(_) {}
+    }
     if (tokenEl) tokenEl.addEventListener('change', function(){
       var v = (tokenEl.value || '').trim();
       try {
@@ -109,6 +140,13 @@
         .then(function(){ if (logEl) logEl.textContent = ''; setStatus('Ready for new Message.'); })
         .catch(function(e){ append('Error: ' + e + '\n'); setStatus('Ready for new Message.'); });
     });
+    if (jumpEl && logEl) {
+      jumpEl.addEventListener('click', function(){ scroll(); });
+      logEl.addEventListener('scroll', function(){
+        var nearBottom = (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight) < 40;
+        jumpEl.style.display = nearBottom ? 'none' : '';
+      });
+    }
   }
   function init(){
     if (!logEl || !msgEl) { console.log('[ui-error] elements missing'); return; }

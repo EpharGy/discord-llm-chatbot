@@ -35,7 +35,7 @@ class _TzFormatter(logging.Formatter):
         return dt.isoformat()
 
 
-def configure_logging(level: Optional[str] = None, tz: Optional[str] = None, fmt: str = "text", lib_log_level: Optional[str] = None, log_errors: bool | None = None) -> None:
+def configure_logging(level: Optional[str] = None, tz: Optional[str] = None, fmt: str = "text", lib_log_level: Optional[str] = None, console_to_file: bool | None = None, error_file: bool | None = None) -> None:
     global _CONFIGURED, _FULL_ENABLED
     if _CONFIGURED:
         return
@@ -58,21 +58,21 @@ def configure_logging(level: Optional[str] = None, tz: Optional[str] = None, fmt
     else:
         pattern = "%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
 
+    # Always log to console
     handler = logging.StreamHandler()
     handler.setLevel(py_level)
     handler.setFormatter(_TzFormatter(pattern, tz=tz, datefmt="%Y-%m-%d %H:%M:%S%z"))
     root.addHandler(handler)
 
-    # Optional: write logs to a persistent file. Historically this was ERROR-only; now
-    # it mirrors the console level and writes full output to logs/log.log.
-    want_file = log_errors  # renamed upstream to log_to_output; kept param name for compat
-    if want_file is None:
-        want_file = str(os.getenv("LOG_TO_OUTPUT", "") or os.getenv("LOG_ERRORS", "")).lower() in ("1", "true", "yes", "on")
-    if want_file:
+    # Optional: mirror console logs to logs/log.log when LOG_CONSOLE=true
+    mirror_enabled = console_to_file if console_to_file is not None else None
+    env_console = os.getenv("LOG_CONSOLE")
+    if env_console is not None:
+        mirror_enabled = str(env_console).lower() in ("1","true","yes","on")
+    if mirror_enabled:
         try:
             os.makedirs("logs", exist_ok=True)
-            # Rotate at ~1MB with up to 5 backups: log.log, log.log.1 .. log.log.5
-            file_handler = RotatingFileHandler(
+            general_file = RotatingFileHandler(
                 filename="logs/log.log",
                 mode="a",
                 maxBytes=1_000_000,
@@ -80,9 +80,31 @@ def configure_logging(level: Optional[str] = None, tz: Optional[str] = None, fmt
                 encoding="utf-8",
                 delay=False,
             )
-            file_handler.setLevel(py_level)
-            file_handler.setFormatter(_TzFormatter(pattern, tz=tz, datefmt="%Y-%m-%d %H:%M:%S%z"))
-            root.addHandler(file_handler)
+            general_file.setLevel(py_level)
+            general_file.setFormatter(_TzFormatter(pattern, tz=tz, datefmt="%Y-%m-%d %H:%M:%S%z"))
+            root.addHandler(general_file)
+        except Exception:
+            pass
+
+    # ERROR file logging: always write ERROR+ to logs/errors.log when LOG_ERRORS=true
+    errors_enabled = str(os.getenv("LOG_ERRORS", "")).lower() in ("1","true","yes","on")
+    if error_file is not None:
+        errors_enabled = bool(error_file)
+    if errors_enabled:
+        try:
+            os.makedirs("logs", exist_ok=True)
+            # Rotate at ~1MB with up to 5 backups
+            err_handler = RotatingFileHandler(
+                filename="logs/errors.log",
+                mode="a",
+                maxBytes=1_000_000,
+                backupCount=5,
+                encoding="utf-8",
+                delay=False,
+            )
+            err_handler.setLevel(logging.ERROR)
+            err_handler.setFormatter(_TzFormatter(pattern, tz=tz, datefmt="%Y-%m-%d %H:%M:%S%z"))
+            root.addHandler(err_handler)
         except Exception:
             # Don't break startup due to file I/O
             pass

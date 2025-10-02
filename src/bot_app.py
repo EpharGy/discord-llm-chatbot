@@ -38,7 +38,8 @@ async def main() -> None:
         tz=None,
         fmt="text",
         lib_log_level=config.lib_log_level(),
-        log_errors=config.log_to_output(),
+        console_to_file=config.log_console(),
+        error_file=config.log_errors(),
     )
     logger = get_logger("bot_app")
 

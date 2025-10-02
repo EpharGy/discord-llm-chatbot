@@ -174,16 +174,17 @@ class ConfigService:
         v = self._cfg.raw.get("LOG_PROMPTS", False)
         return bool(v)
 
-    def log_to_output(self) -> bool:
-        """Return whether to write full application logs to logs/log.log.
+    def log_console(self) -> bool:
+        """Return whether to write logs to console (stdout). Uses LOG_CONSOLE only."""
+        self._maybe_reload()
+        return bool(self._cfg.raw.get("LOG_CONSOLE", True))
 
-        New key: LOG_TO_OUTPUT (bool). For backward compatibility, also honor
-        legacy LOG_ERRORS if present.
+    def log_errors(self) -> bool:
+        """Return whether to always write ERROR-and-above to logs/errors.log.
+
+        This is independent of LOG_LEVEL and LOG_CONSOLE.
         """
         self._maybe_reload()
-        if "LOG_TO_OUTPUT" in self._cfg.raw:
-            return bool(self._cfg.raw.get("LOG_TO_OUTPUT", False))
-        # Fallback legacy
         return bool(self._cfg.raw.get("LOG_ERRORS", False))
 
     # Bot run mode (Discord/Web/Both)
@@ -197,30 +198,20 @@ class ConfigService:
     def html_port(self) -> int:
         self._maybe_reload()
         try:
-            # Prefer new location under http.html_port; fallback to legacy bot_type.html_port
-            if "http" in self._cfg.raw and isinstance(self._cfg.raw.get("http"), dict):
-                return int(self._cfg.raw.get("http", {}).get("html_port", 8005))
-            return int(self._cfg.raw.get("bot_type", {}).get("html_port", 8005))
+            return int((self._cfg.raw.get("http") or {}).get("html_port", 8005))
         except Exception:
             return 8005
 
     def html_host(self) -> str:
         """Host interface for the HTTP server. Default to 127.0.0.1 (safe)."""
         self._maybe_reload()
-        http_cfg = self._cfg.raw.get("http", {}) if isinstance(self._cfg.raw.get("http"), dict) else {}
-        v = http_cfg.get("html_host")
-        if not v:
-            v = self._cfg.raw.get("bot_type", {}).get("html_host")
+        v = (self._cfg.raw.get("http") or {}).get("html_host")
         return str(v) if v else "127.0.0.1"
 
     def http_auth_bearer_token(self) -> str | None:
         """Optional bearer token for HTTP endpoints; when set, required on protected routes."""
         self._maybe_reload()
-        http_cfg = self._cfg.raw.get("http", {}) if isinstance(self._cfg.raw.get("http"), dict) else {}
-        v = http_cfg.get("bearer_token")
-        if not v and isinstance(http_cfg.get("auth"), dict):
-            # Backward compatibility for http.auth.bearer_token
-            v = http_cfg.get("auth", {}).get("bearer_token")
+        v = (self._cfg.raw.get("http") or {}).get("bearer_token")
         v = str(v).strip() if v else None
         return v or None
 

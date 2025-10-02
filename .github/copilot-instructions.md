@@ -1,50 +1,55 @@
 # AI Assistant Instructions for This Repo
 
-Purpose: Enable fast, correct edits to this Discord LLM bot. Favor small, targeted changes that preserve existing patterns and config-driven behavior.
+Purpose: Enable fast, correct edits to this Discord/Web LLM bot. Favor small, targeted changes that preserve config‑driven behavior and existing patterns.
 
-## Project map and flow
-- Entrypoint: `src/bot_app.py` wires all services, loads `config.yaml`, sets logging, starts Discord client, and runs two background loops (mentions queue and conversation batching).
-- Event flow: Discord message → `MessageRouter.handle_message` → `ParticipationPolicy.should_reply` → prompt assembly (`PromptTemplateEngine`, persona, optional lore, history) → `LLMClient` call → post reply → memory/conv-mode updates.
-- Key components:
-  - `ConfigService` (load/reload config + getters)
-  - `LoggerFactory` (structured logs); use `fmt()` from `utils/logfmt.py`
-  - `ParticipationPolicy` (rate limits, triggers, channel allowlist, `response_chance_override` for 100% chance)
-  - `ConversationMemory` (recent msgs, cooldown data, conv-mode window; tracks responded message IDs)
-  - `ConversationBatcher` (batch non-mentions during conv-mode)
-  - `PromptTemplateEngine` + `PersonaService` (system + persona + context template)
-  - `LoreService` (optional SillyTavern JSON; inserted as a system block after system prompt)
-  - `TokenizerService` (heuristic counts + truncation)
-  - `LLM` (`src/llm/openrouter_client.py`) with retries and `X-Title: Discord LLM Bot` header
+## Architecture at a glance
+- Entrypoint: `src/bot_app.py` loads `config.yaml`, configures logging, builds a `MessageRouter`, and runs:
+  - Discord client (if `bot_type.method` is `DISCORD`/`BOTH`).
+  - FastAPI web server (if `bot_type.method` is `WEB`/`BOTH`) at `http.html_host:html_port`.
+- Core flow (both Discord and Web): message → `MessageRouter.handle_message` or `build_batch_reply` → `ParticipationPolicy` → prompt assembly (`PromptTemplateEngine` + `PersonaService` + optional `LoreService`) → `LLM` call → post reply → update `ConversationMemory` and conversation-mode state.
+- Router build is centralized in `http_app.build_router_from_config(cfg)` and mirrored in `bot_app.py`.
+
+## Web mode specifics
+- App: `src/http_app.py` mounts static UI (`/static` → `src/web/static`) and serves `/`.
+- Endpoints: `/chat` (POST), `/reset` (POST), `/web-config` (GET), `/health` (GET).
+  - `/chat` constructs a web event and calls `router.build_batch_reply`; single room id is `"web-room"` by default.
+  - `/web-config` returns `{ bot_name, default_user_name, token_required }`.
+  - `/reset` clears `ConversationMemory.clear("web-room")` and `ConversationBatcher.clear("web-room")`.
+- UI: `src/web/static/{index.html,app.js}` renders Markdown (safe subset), images/links, status line, and a Reset button. If `http.bearer_token` is set, a token field appears and headers include `Authorization: Bearer <token>`; token persists in `localStorage`.
 
 ## Prompt composition (what to maintain)
-- System prompt from `prompts/system.txt`.
-- If lore is enabled: insert a single system message right after system prompt: "You may use the following background context if it is relevant…" + `[Lore]` block.
-- If `context.use_template=true`: render template output as a system message; also include a small raw tail controlled by `context.keep_history_tail`.
-- Budgeting: use `model.context_window` minus `model.max_tokens`; trim oldest history first; truncate the current user content last.
+- Use paths from config: `context.system_prompt_path`, optional `context.system_prompt_path_nsfw`, `context.persona_path`, and `context.context_template_path`.
+- If lore is enabled (`context.lore.enabled`): insert one system block after the system prompt: “You may use the following background context…” with `[Lore]`.
+- If `context.use_template`: render the context template as a system message and keep a small raw history tail (`context.keep_history_tail`).
+- Budget: `model.context_window` minus `model.max_tokens`; evict oldest history first; truncate current user content last.
 
 ## Participation & conversation mode
-- General chat only in `participation.general_chat.allowed_channels`.
-- `participation.general_chat.response_chance_override`: channels that always pass the random chance gate (cooldowns still apply).
-- Mentions/name aliases always allowed (style `reply`).
-- Conversation mode: after a reply, `conversation_mode.enabled/window_seconds/max_messages`; batching loop drains per-channel buffers and posts one summary reply.
+- General chat only in `participation.general_chat.allowed_channels`; `response_chance_override` forces 100% chance (cooldowns still apply).
+- Mentions or name aliases (from `participation.name_aliases`) always allowed.
+- After the bot replies, conversation mode uses `window_seconds` and `max_messages`; `ConversationBatcher` drains buffers and posts one summary reply per interval.
 
-## Logging & debugging
-- Set `LOG_LEVEL`: `INFO|DEBUG|FULL` (FULL also logs partial payloads; no secrets). Library verbosity via `LIB_LOG_LEVEL`.
-- `LOG_PROMPTS=true` writes prompts to `logs/prompts-YYYYMMDD-HHMMSS/{prompt.json,prompt.txt,response.txt}` (may contain sensitive info).
-- Common log lines: `decision …`, `llm-start/llm-finish …`, `tokenizer-summary …`, lore `lore-include` and `lore-limit-reached`.
-- Correlation: `utils/correlation.make_correlation_id()` ties decision → LLM call → post.
+## Config keys agents should know
+- Run mode: `bot_type.method` = `DISCORD|WEB|BOTH`.
+- Web server: `http.html_host` (default `127.0.0.1`), `http.html_port` (default `8005`).
+- Web auth (optional): `http.bearer_token` → required on `/chat` (and used by UI when present).
+- Models: `model.*` (temperature, top_p, max_tokens, context_window, models[], retries, concurrency, http_referer, x_title).
+- Logging: `LOG_LEVEL`, `LIB_LOG_LEVEL`, `LOG_PROMPTS`, `LOG_TO_OUTPUT`.
 
-## Run & env
-- Windows/PowerShell run:
-  ```powershell
-  $env:PYTHONPATH = "src"
-  python -m src.bot_app
-  ```
-- Secrets in `.env`: `DISCORD_TOKEN`, `OPENROUTER_API_KEY`.
+## Logging & correlation
+- Common lines: `decision …`, `llm-start/llm-finish …`, `tokenizer-summary …`, `lore-include` | `lore-limit-reached`.
+- Prompt dumps when `LOG_PROMPTS=true` → `logs/prompts-YYYYMMDD-HHMMSS/`.
+- Correlation: `utils/correlation.make_correlation_id(channel_id, message_id)`; the web path attaches this per request.
 
-## Editing conventions for agents
-- Add config: put keys in `config.yaml` and expose minimal getters in `ConfigService`; keep defaults safe.
-- Extend policy or routing: prefer small, explicit flags in config and keep decisions logged via `ParticipationPolicy._log_decision`.
-- New providers: implement `LLMClient`-compatible class in `src/llm/`, wire in `bot_app.py`, and gate via config; do not remove OpenRouter.
-- Be careful with logging: never log secrets; prefer structured fields using `fmt()`.
-- Avoid changing public method signatures unless you update all call sites and the docs/comments nearby.
+## Dev workflow (Windows/PowerShell)
+```powershell
+$env:PYTHONPATH = "src"
+python -m src.bot_app
+```
+Secrets in `.env`: `DISCORD_TOKEN`, `OPENROUTER_API_KEY`.
+
+## Patterns & conventions for edits
+- Add config → update `config.yaml` and provide a minimal getter in `ConfigService` (keep safe defaults; retain backward compatibility when keys move).
+- Prefer config flags for behavior changes; keep decision logs via `ParticipationPolicy`.
+- Providers: implement `LLMClient`-compatible classes under `src/llm/`, wire in `bot_app.py`, keep OpenRouter as default.
+- Web UI: serve assets from `src/web/static` (do not inline large JS/HTML in Python); keep `/web-config` small.
+- Never log secrets; keep external URLs in UI to `http(s)` only.

@@ -60,7 +60,7 @@ def build_router_from_config(cfg: ConfigService) -> MessageRouter:
 
 def create_app() -> FastAPI:
     cfg = ConfigService("config.yaml")
-    configure_logging(level=cfg.log_level(), tz=None, fmt="text", lib_log_level=cfg.lib_log_level(), log_errors=cfg.log_to_output())
+    configure_logging(level=cfg.log_level(), tz=None, fmt="text", lib_log_level=cfg.lib_log_level(), console_to_file=cfg.log_console(), error_file=cfg.log_errors())
     log = get_logger("http_app")
     router = build_router_from_config(cfg)
     bearer = cfg.http_auth_bearer_token()
