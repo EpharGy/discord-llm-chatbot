@@ -152,6 +152,7 @@ class OpenRouterClient(LLMClient):
                     "output_tokens": output_tokens,
                     "total_tokens": total_tokens,
                 },
+                "provider": "openrouter",
             }
 
     async def aclose(self):

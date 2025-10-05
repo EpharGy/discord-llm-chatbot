@@ -99,7 +99,7 @@ class ToolBridge:
                     temperature=temp,
                     top_p=self.router.model_cfg.get("top_p"),
                     stop=stops,
-                    context_fields={"channel": channel_id, "user": "tool", "correlation": correlation_id},
+                    context_fields={"channel": channel_id, "user": "tool", "correlation": correlation_id, "nsfw": is_nsfw, "has_images": False},
                 )
                 reply = result.get("text") if isinstance(result, dict) else result
                 model_used = model_name
@@ -117,7 +117,7 @@ class ToolBridge:
                     temperature=temp,
                     top_p=self.router.model_cfg.get("top_p"),
                     stop=stops,
-                    context_fields={"channel": channel_id, "user": "tool", "correlation": correlation_id},
+                    context_fields={"channel": channel_id, "user": "tool", "correlation": correlation_id, "nsfw": is_nsfw, "has_images": False},
                 )
                 reply = result.get("text") if isinstance(result, dict) else result
                 model_used = "openrouter/auto"

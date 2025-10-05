@@ -12,6 +12,8 @@ from .conversation_memory import ConversationMemory
 from .participation_policy import ParticipationPolicy
 from .task_queue import MentionsQueue
 from .llm.openrouter_client import OpenRouterClient
+from .llm.kobold_openai_client import KoboldOpenAIClient
+from .llm.multi_backend_client import ContextualMultiBackendClient
 from .conversation_batcher import ConversationBatcher
 from .lore_service import LoreService
 
@@ -59,13 +61,66 @@ async def main() -> None:
     prev_conv_active: dict[str, bool] = {}
 
     model_cfg = config.model()
-    llm = OpenRouterClient(
-        concurrency=int(model_cfg.get("concurrency", 2)),
-        base_url=model_cfg.get("base_url", "https://openrouter.ai/api/v1/chat/completions"),
-        retry_attempts=int(model_cfg.get("retry_attempts", 2)),
-        http_referer=model_cfg.get("http_referer", "http://example.com"),
-        x_title=model_cfg.get("x_title", "Discord LLM Bot"),
-    )
+    # Build providers based on config
+    providers = []
+    nsfw_providers = []
+    vision_providers = []
+    # OpenRouter client (default)
+    orc = None
+    try:
+        orc = OpenRouterClient(
+            concurrency=int(model_cfg.get("concurrency", 2)),
+            base_url=model_cfg.get("base_url", "https://openrouter.ai/api/v1/chat/completions"),
+            retry_attempts=int(model_cfg.get("retry_attempts", 2)),
+            http_referer=model_cfg.get("http_referer", "http://example.com"),
+            x_title=model_cfg.get("x_title", "Discord LLM Bot"),
+        )
+        providers.append(orc)
+        nsfw_providers.append(orc)
+        vision_providers.append(orc)
+    except Exception:
+        pass
+    # Optional Kobold (OpenAI-compatible) local backend
+    kob = None
+    kob_cfg = (model_cfg.get("kobold") or {}) if isinstance(model_cfg, dict) else {}
+    if kob_cfg.get("enabled", False):
+        _kob_url = str(kob_cfg.get("base_url", "http://127.0.0.1:5001/v1/chat/completions"))
+        _u = _kob_url.rstrip("/")
+        if _u.endswith("/v1"):
+            _kob_url = _u + "/chat/completions"
+        kob = KoboldOpenAIClient(
+            base_url=_kob_url,
+            concurrency=int(kob_cfg.get("concurrency", model_cfg.get("concurrency", 2))),
+            timeout=float(kob_cfg.get("timeout", 60.0)),
+            retry_attempts=int(kob_cfg.get("retry_attempts", 1)),
+        )
+        logger.info(f"kobold-client-enabled url={_kob_url}")
+        # Selection order is controlled by context lists and config; default add to all
+        providers.append(kob)
+        nsfw_providers.insert(0, kob)  # prefer kobold for NSFW by default
+        vision_providers.append(kob)
+
+    # If config specifies explicit provider order per context, respect it
+    order = (model_cfg.get("provider_order") or {}) if isinstance(model_cfg, dict) else {}
+    def order_list(kind: str, current: list):
+        names = [n.strip().lower() for n in (order.get(kind) or [])]
+        by_name = {"openrouter": orc, "kobold": kob}
+        out = []
+        for n in names:
+            c = by_name.get(n)
+            if c is not None:
+                out.append(c)
+        # Append any not listed
+        for c in current:
+            if c not in out:
+                out.append(c)
+        return out
+    providers = order_list("normal", providers)
+    nsfw_providers = order_list("nsfw", nsfw_providers)
+    vision_providers = order_list("vision", vision_providers)
+    web_providers = order_list("web", providers)
+
+    llm = ContextualMultiBackendClient(normal=providers, nsfw=nsfw_providers, vision=vision_providers, web=web_providers)
     lore = LoreService(config.lore_paths(), md_priority=config.lore_md_priority()) if config.lore_enabled() else None
 
     router = MessageRouter(

@@ -33,8 +33,38 @@ model:
   # Premium/paid models:
    - "google/gemini-2.5-flash"
    - "meta-llama/llama-4-scout"
-
   allow_auto_fallback: true   # use openrouter's automatic fallback if the main model is down, this may incur cost
+  vision:
+    enabled: true
+    max_images: 4
+    models:
+  #    - x-ai/grok-4-fast:free
+      - google/gemini-2.0-flash-exp:free
+      - meta-llama/llama-4-scout:free
+      - meta-llama/llama-4-scout
+    mode: single-pass
+    retry_on_image_count_error: true
+    fallback_to_text: true
+    apply_in:
+      mentions: true
+      replies: true
+      general_chat: true
+      batch: true
+    log_image_urls: false
+    timeout_multiplier: 1.5
+  # Optional local OpenAI-compatible backend (e.g., kobold.cpp with --api)
+  kobold:
+    enabled: false
+    base_url: http://127.0.0.1:5001/v1/chat/completions
+    concurrency: 2
+    timeout: 60.0
+    retry_attempts: 1
+
+  # Provider selection order per context (names: openrouter, kobold)
+  provider_order:
+    normal: [openrouter, kobold]
+    nsfw: [kobold, openrouter]
+    vision: [openrouter, kobold]
   
   # base_url: https://openrouter.ai/api/v1/chat/completions  # override if needed
   
@@ -46,24 +76,7 @@ model:
     - "<｜end▁of▁sentence｜>" # End of message token for DeepSeek models
     - "<end_of_turn>" # End of message for Gemma models
 
-vision:
-  enabled: true
-  max_images: 4
-  models:
-#    - x-ai/grok-4-fast:free
-    - google/gemini-2.0-flash-exp:free
-    - meta-llama/llama-4-scout:free
-    - meta-llama/llama-4-scout
-  mode: single-pass
-  retry_on_image_count_error: true
-  fallback_to_text: true
-  apply_in:
-    mentions: true
-    replies: true
-    general_chat: true
-    batch: true
-  log_image_urls: false
-  timeout_multiplier: 1.5
+
 
 rate_limits:
   # Anti-spam: hard cap per channel to avoid flooding LLM calls

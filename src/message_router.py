@@ -649,46 +649,80 @@ class MessageRouter:
             except Exception:
                 pass
 
-            for idx, model_name in enumerate(models_to_try):
-                if not model_name:
-                    continue
-                try:
+            # Determine provider list for this context if available
+            _nsfw_flag_detect = False
+            try:
+                ch = getattr(message, 'channel', None)
+                if ch is not None:
+                    _nsfw_flag_detect = bool(getattr(ch, 'nsfw', False)) or bool(getattr(getattr(ch, 'parent', None), 'nsfw', False))
+            except Exception:
+                _nsfw_flag_detect = False
+            base_cf = {
+                "channel": event.get('channel_name', event['channel_id']),
+                "user": event.get('author_name'),
+                "correlation": correlation_id,
+                "nsfw": _nsfw_flag_detect,
+                "has_images": has_images,
+            }
+            # Propagate web flag if set on the event (web router sets this)
+            try:
+                if bool(event.get('web')):
+                    base_cf['web'] = True
+            except Exception:
+                pass
+            provider_indices = [0]
+            try:
+                if hasattr(self.llm, 'providers_for_context'):
+                    plist = self.llm.providers_for_context(base_cf)  # type: ignore[attr-defined]
+                    if isinstance(plist, list) and len(plist) > 1:
+                        provider_indices = list(range(len(plist)))
+            except Exception:
+                pass
+
+            for p_index in provider_indices:
+                for idx, model_name in enumerate(models_to_try):
+                    if not model_name:
+                        continue
                     start_ts = datetime.now(timezone.utc)
-                    # Detect NSFW for logging context
-                    try:
-                        _nsfw_flag = False
-                        ch = getattr(message, 'channel', None)
-                        if ch is not None:
-                            _nsfw_flag = bool(getattr(ch, 'nsfw', False)) or bool(getattr(getattr(ch, 'parent', None), 'nsfw', False))
-                    except Exception:
-                        _nsfw_flag = False
                     line = (
                         f"[llm-start] "
                         f"{fmt('channel', event.get('channel_name', event['channel_id']))} "
                         f"{fmt('user', event.get('author_name'))} "
                         f"{fmt('model', model_name)} "
-                        f"{fmt('nsfw', _nsfw_flag)} "
+                        f"{fmt('nsfw', _nsfw_flag_detect)} "
                         f"{fmt('has_images', has_images)} "
                         + (f" {fmt('image_count', len(image_urls))}" if has_images else "") + " "
                         f"{fmt('fallback_index', idx)} "
                         f"{fmt('msg', getattr(message, 'id', ''))} "
                         f"{fmt('correlation', correlation_id)}"
                     )
-                    self.log.info(line)
-                    result = await self.llm.generate_chat(
-                        messages_for_est,
-                        max_tokens=self.model_cfg.get("max_tokens"),
-                        model=model_name,
-                        temperature=self.model_cfg.get("temperature"),
-                        top_p=self.model_cfg.get("top_p"),
-                        stop=stops,
-                        context_fields={
-                            "channel": event.get('channel_name', event['channel_id']),
-                            "user": event.get('author_name'),
-                            "correlation": correlation_id,
-                        },
-                    )
+                    # Demote router-level start to DEBUG; authoritative start is logged by the provider selector
+                    self.log.debug(line)
+                    cf_send = dict(base_cf)
+                    cf_send["provider_index"] = p_index
+                    try:
+                        result = await self.llm.generate_chat(
+                            messages_for_est,
+                            max_tokens=self.model_cfg.get("max_tokens"),
+                            model=model_name,
+                            temperature=self.model_cfg.get("temperature"),
+                            top_p=self.model_cfg.get("top_p"),
+                            stop=stops,
+                            context_fields=cf_send,
+                        )
+                    except Exception as e:
+                        self.log.error(f"LLM error with {model_name}: {e}")
+                        reply = None
+                        # Explicit marker that this model is exhausted before moving to next fallback
+                        try:
+                            self.log.error(
+                                f"[llm-model-exhausted] {fmt('model', model_name)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}"
+                            )
+                        except Exception:
+                            pass
+                        continue
                     reply = result.get("text") if isinstance(result, dict) else result
+                    provider_used = (result or {}).get("provider") if isinstance(result, dict) else None
                     # Optional prompt/response logging to files
                     try:
                         from .config_service import ConfigService
@@ -749,8 +783,9 @@ class MessageRouter:
                             f"{fmt('channel', event.get('channel_name', event['channel_id']))} "
                             f"{fmt('user', event.get('author_name'))} "
                             f"{fmt('model', model_name)} "
+                            f"{fmt('provider', provider_used or 'unknown')} "
                             f"{fmt('duration_ms', dur_ms)} "
-                            f"{fmt('nsfw', _nsfw_flag)} "
+                            f"{fmt('nsfw', _nsfw_flag_detect)} "
                             f"{fmt('has_images', has_images)} "
                             + (f" {fmt('image_count', len(image_urls))}" if has_images else "") + " "
                             f"{fmt('tokens_in', usage.get('input_tokens','NA'))} "
@@ -765,8 +800,9 @@ class MessageRouter:
                             f"{fmt('channel', event.get('channel_name', event['channel_id']))} "
                             f"{fmt('user', event.get('author_name'))} "
                             f"{fmt('model', model_name)} "
+                            f"{fmt('provider', provider_used or 'unknown')} "
                             f"{fmt('duration_ms', dur_ms)} "
-                            f"{fmt('nsfw', _nsfw_flag)} "
+                            f"{fmt('nsfw', _nsfw_flag_detect)} "
                             f"{fmt('has_images', has_images)} "
                             + (f" {fmt('image_count', len(image_urls))}" if has_images else "") + " "
                             f"{fmt('fallback_index', idx)} "
@@ -791,16 +827,8 @@ class MessageRouter:
                     except Exception:
                         pass
                     break
-                except Exception as e:
-                    self.log.error(f"LLM error with {model_name}: {e}")
-                    reply = None
-                    # Explicit marker that this model is exhausted before moving to next fallback
-                    try:
-                        self.log.error(
-                            f"[llm-model-exhausted] {fmt('model', model_name)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}"
-                        )
-                    except Exception:
-                        pass
+                if reply:
+                    break
 
             if reply is None and allow_auto:
                 try:
@@ -818,6 +846,14 @@ class MessageRouter:
                         f"{fmt('correlation', correlation_id)}"
                     )
                     start_ts = datetime.now(timezone.utc)
+                    # Compute NSFW flag safely for auto-fallback
+                    try:
+                        _nsfw_auto = False
+                        ch = getattr(message, 'channel', None)
+                        if ch is not None:
+                            _nsfw_auto = bool(getattr(ch, 'nsfw', False)) or bool(getattr(getattr(ch, 'parent', None), 'nsfw', False))
+                    except Exception:
+                        _nsfw_auto = False
                     result = await self.llm.generate_chat(
                         messages_for_est,
                         max_tokens=self.model_cfg.get("max_tokens"),
@@ -829,6 +865,8 @@ class MessageRouter:
                             "channel": event.get('channel_name', event['channel_id']),
                             "user": event.get('author_name'),
                             "correlation": correlation_id,
+                            "nsfw": _nsfw_auto,
+                            "has_images": has_images,
                         },
                     )
                     reply = result.get("text") if isinstance(result, dict) else result
@@ -1156,7 +1194,8 @@ class MessageRouter:
                         _nsfw_batch = bool(getattr(channel, 'nsfw', False)) or bool(getattr(getattr(channel, 'parent', None), 'nsfw', False))
                 except Exception:
                     _nsfw_batch = False
-                self.log.info(f"[llm-start] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('nsfw', _nsfw_batch)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
+                # Demote router-level start; provider selector logs authoritative start with provider
+                self.log.debug(f"[llm-start] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('nsfw', _nsfw_batch)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
                 result = await self.llm.generate_chat(
                     messages,
                     max_tokens=self.model_cfg.get('max_tokens'),
@@ -1164,9 +1203,10 @@ class MessageRouter:
                     temperature=self.model_cfg.get('temperature'),
                     top_p=self.model_cfg.get('top_p'),
                     stop=stops,
-                    context_fields={'channel': cid, 'user': 'batch', 'correlation': correlation_id},
+                    context_fields={'channel': cid, 'user': 'batch', 'correlation': correlation_id, 'nsfw': _nsfw_batch, 'has_images': False},
                 )
                 reply = result.get('text') if isinstance(result, dict) else result
+                provider_used = (result or {}).get('provider') if isinstance(result, dict) else None
                 # Optional prompt/response logging to files for batch/web mode
                 try:
                     from .config_service import ConfigService
@@ -1194,9 +1234,9 @@ class MessageRouter:
                 usage = (result or {}).get('usage') if isinstance(result, dict) else None
                 dur_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
                 if usage and (usage.get('input_tokens') is not None or usage.get('output_tokens') is not None):
-                    self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('tokens_in', usage.get('input_tokens','NA'))} {fmt('tokens_out', usage.get('output_tokens','NA'))} {fmt('total_tokens', usage.get('total_tokens','NA'))} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
+                    self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('provider', provider_used or 'unknown')} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('tokens_in', usage.get('input_tokens','NA'))} {fmt('tokens_out', usage.get('output_tokens','NA'))} {fmt('total_tokens', usage.get('total_tokens','NA'))} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
                 else:
-                    self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
+                    self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('provider', provider_used or 'unknown')} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
                 break
             except Exception as e:
                 self.log.error(f"LLM error with {model_name}: {e}")
@@ -1212,11 +1252,12 @@ class MessageRouter:
                     temperature=self.model_cfg.get('temperature'),
                     top_p=self.model_cfg.get('top_p'),
                     stop=stops,
-                    context_fields={'channel': cid, 'user': 'batch', 'correlation': correlation_id},
+                    context_fields={'channel': cid, 'user': 'batch', 'correlation': correlation_id, 'nsfw': _nsfw_batch, 'has_images': False},
                 )
                 reply = result.get('text') if isinstance(result, dict) else result
+                provider_used = (result or {}).get('provider') if isinstance(result, dict) else None
                 dur_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
-                self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model','openrouter/auto')} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('correlation', correlation_id)}")
+                self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model','openrouter/auto')} {fmt('provider', provider_used or 'openrouter')} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('correlation', correlation_id)}")
             except Exception as e2:
                 self.log.error(f"LLM auto fallback error: {e2}")
         return reply

@@ -20,8 +20,9 @@
     .bubble.user { background: #e8f0fe; color: #111; margin-left: auto; }
     .bubble .author { font-weight: 600; margin-bottom: 0.25rem; opacity: 0.8; font-size: 0.95rem; }
     .bubble .content p { margin: 0.25rem 0; }
-    .bubble .content pre { background: #f6f8fa; padding: 0.5rem; border-radius: 6px; }
-    .bubble .content code { background: #f6f8fa; padding: 0.1rem 0.25rem; border-radius: 3px; }
+  /* Avoid double-background inside bubbles: keep code blocks transparent with a subtle border */
+  .bubble .content pre { background: transparent; border: 1px solid #e2e8f0; padding: 0.5rem; border-radius: 6px; }
+  .bubble .content code { background: rgba(0,0,0,0.04); padding: 0.1rem 0.25rem; border-radius: 3px; }
     #log img { max-width: 100%; height: auto; display: block; margin: 0.25rem 0; }
     #log a { color: #1a73e8; text-decoration: underline; }
     #log pre { background: #f6f8fa; padding: 0.75rem; overflow: auto; border-radius: 4px; }
@@ -44,10 +45,16 @@
     #jumpBtn { position: fixed; right: 1rem; bottom: 6rem; display: none; padding: 0.5rem 0.75rem; border-radius: 20px; border: 1px solid #ccc; background: #fff; color: #111; box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
     .dark { background: #0f1115; color: #e6e6e6; }
   .dark #log { background: #12151b; border-color: #2d2f36; }
-  .dark .bubble.bot { background: #1b1f2a; color: #e6e6e6; }
-  .dark .bubble.user { background: #18263f; color: #e6e6e6; }
-  .dark .bubble .content pre { background: #0f1420; }
-  .dark .bubble .content code { background: #0f1420; }
+  /* Increase contrast for bubbles in dark mode */
+  .dark .bubble.bot { background: #171a22; color: #f1f5f9; }
+  .dark .bubble.user { background: #13273f; color: #f1f5f9; }
+  /* Ensure code and pre blocks inside the log use dark backgrounds (ID selector overrides) */
+  .dark #log pre { background: #0f1420; color: #e6e6e6; }
+  .dark #log code { background: #0f1420; color: #e6e6e6; }
+  /* Keep inline/code consistency inside bubbles */
+  .dark .bubble .content pre { background: transparent; border: 1px solid #2a2f3a; color: #e6e6e6; }
+  .dark .bubble .content code { background: rgba(255,255,255,0.08); color: #e6e6e6; }
+  .dark .bubble .author { color: #cbd5e1; opacity: 0.95; }
     .dark a { color: #8ab4f8; }
     @media (max-width: 640px) {
       body { margin: var(--space-1); }
