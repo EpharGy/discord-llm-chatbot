@@ -26,7 +26,6 @@ class ToolBridge:
         summary: str,
         details: Optional[str] = None,
         block_char_limit: int = 1024,
-        reply_max_tokens: Optional[int] = None,
         is_nsfw: bool = False,
         temperature: Optional[float] = None,
         style_hint: Optional[str] = None,
@@ -39,7 +38,6 @@ class ToolBridge:
         - summary: the key result to present.
         - details: optional short key=value string (already redacted).
         - block_char_limit: safety cap for the [Tool] block.
-        - reply_max_tokens: optional tighter cap for the LLM reply.
         - is_nsfw: uses nsfw system prompt variant when true.
         """
         if not getattr(self.router, "llm", None):
@@ -83,7 +81,7 @@ class ToolBridge:
             models_to_try = []
         allow_auto = bool(cfg.get("allow_auto_fallback", False))
         stops = cfg.get("stop")
-        max_tokens = reply_max_tokens or cfg.get("max_tokens")
+        max_tokens = cfg.get("max_tokens")
         temp = temperature if temperature is not None else self.router.model_cfg.get("temperature")
 
         correlation_id = f"{channel_id}-tool-{tool_name}-{int(datetime.now(timezone.utc).timestamp()*1000)}"

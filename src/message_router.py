@@ -520,7 +520,7 @@ class MessageRouter:
 
         # Subtle current local time hint (no location/zone), to help with time-related questions
         try:
-            messages_for_est.append({"role": "system", "content": f"Current Date/Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}"})
+            messages_for_est.append({"role": "system", "content": f"Current Date/Time: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %z')}"})
         except Exception:
             pass
 
@@ -1090,7 +1090,7 @@ class MessageRouter:
                 pass
         # Time hint
         try:
-            system_blocks.append({'role': 'system', 'content': f"Current Date/Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}"})
+            system_blocks.append({'role': 'system', 'content': f"Current Date/Time: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %z')}"})
         except Exception:
             pass
         # Template context

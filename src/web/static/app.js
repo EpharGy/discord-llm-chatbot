@@ -79,7 +79,19 @@
     }
     return html;
   }
-  function append(text){ if (!logEl) return; logEl.insertAdjacentHTML('beforeend', mdToHtml(text)); scroll(); }
+  function appendRawHtml(html){ if (!logEl) return; logEl.insertAdjacentHTML('beforeend', html); scroll(); }
+  function bubble(author, contentHtml, who){
+    var cls = who === 'user' ? 'user' : 'bot';
+    var safeAuthor = escapeHtml(author || '');
+    return '<div class="bubble ' + cls + '">' +
+             '<div class="author">' + safeAuthor + '</div>' +
+             '<div class="content">' + contentHtml + '</div>' +
+           '</div>';
+  }
+  function append(text){
+    // Back-compat: render a simple block as a bot bubble
+    appendRawHtml(bubble(bot, mdToHtml(text), 'bot'));
+  }
   function getUser(){ var v = (nameEl && nameEl.value) ? nameEl.value.trim() : ''; return v || defaultUser; }
   function send(){
     var content = (msgEl && msgEl.value ? msgEl.value : '').trim();
@@ -88,10 +100,12 @@
     setStatus('Message sent, awaiting response.');
     var headers = { 'Content-Type': 'application/json' };
     if (tokenRequired && tokenEl && tokenEl.value.trim()) headers['Authorization'] = 'Bearer ' + tokenEl.value.trim();
+    // Render the user bubble immediately
+    appendRawHtml(bubble(user, mdToHtml(content), 'user'));
     fetch('/chat', { method: 'POST', headers: headers, body: JSON.stringify({ content: content, user_name: user, user_id: user.toLowerCase() }) })
-      .then(function(res){ if (!res.ok) { append('Error ' + res.status + ' ' + res.statusText + '\n\n'); return res.text().then(function(t){ throw new Error(t); }); } return res.json(); })
-  .then(function(json){ if (!json) return; append('\n' + user + ': ' + content + '\n\n' + bot + ': ' + (json.reply ? json.reply : '(no reply)') + '\n'); if (msgEl) msgEl.value = ''; setStatus('Ready for new Message.'); })
-      .catch(function(e){ append('Error: ' + e + '\n'); setStatus('Ready for new Message.'); });
+      .then(function(res){ if (!res.ok) { appendRawHtml(bubble('Error', mdToHtml('Error ' + res.status + ' ' + res.statusText), 'bot')); return res.text().then(function(t){ throw new Error(t); }); } return res.json(); })
+      .then(function(json){ if (!json) return; var reply = (json.reply ? json.reply : '(no reply)'); appendRawHtml(bubble(bot, mdToHtml(reply), 'bot')); if (msgEl) msgEl.value = ''; setStatus('Ready for new Message.'); })
+      .catch(function(e){ appendRawHtml(bubble('Error', mdToHtml(String(e)), 'bot')); setStatus('Ready for new Message.'); });
   }
   function autoGrow(){
     if (!msgEl) return;
@@ -161,7 +175,7 @@
         secNoteEl.textContent = 'Note: This server requires an API bearer token. The built-in web UI works only when no token is set.';
         if (tokenHelpEl) {
           tokenHelpEl.style.display = '';
-          tokenHelpEl.textContent = 'Tip: If you want, I can add a small "API token" input to this page so it includes Authorization: Bearer <token> on requests.';
+          tokenHelpEl.textContent = '';
         }
         tokenRequired = true;
         if (tokenRowEl) tokenRowEl.style.display = '';
