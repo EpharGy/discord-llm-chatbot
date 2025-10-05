@@ -49,4 +49,4 @@ prompts/*
 # cogs
 !cogs/*
 /cogs/extra_cogs/*
-!/cogs/extra_cogs/add custom cog py files here
+!/cogs/extra_cogs/COG_GUIDELINES.md
