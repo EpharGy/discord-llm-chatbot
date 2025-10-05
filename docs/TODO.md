@@ -88,6 +88,65 @@ Acceptance Criteria:
 - Optional identity update changes bot nickname/avatar within a guild and via HTTP UI.
 - Backward compatibility: if `context.persona_path` is present, behavior matches current.
 
+## 2.5) URL Metadata Enrichment (Link‑Only Messages)
+
+Goal: When a message contains only (or mostly) URLs, enrich context by attaching lightweight page/video metadata so the bot can respond meaningfully without a user question.
+
+Approach (fast, safe, no secrets):
+
+- Detect URLs in the incoming message (Discord + Web). If link‑only, fetch compact metadata per URL and inject one small system block before prompt assembly.
+
+- Extraction order (short‑circuit on success):
+
+  1) oEmbed (zero‑auth) when available (e.g., YouTube oEmbed endpoint).
+
+  2) OpenGraph + Twitter Card meta tags (download first ~64–128KB only).
+
+  3) \<title> tag fallback.
+
+  4) JSON‑LD (schema.org) for fields like name/author/datePublished.
+
+- Inject a single system message labeled `[Link metadata]` with: Title, Site, Author/Channel, Date, URL (truncate long fields; no raw HTML).
+
+Safety/perf:
+
+- Allowlist/denylist domains (configurable). Only http(s).
+- Per‑URL timeout ~1–2s and global budget per message; abort if slow.
+- Max bytes read per URL (e.g., 131072). Text/HTML or JSON only; skip binaries.
+- In‑memory LRU cache with TTL (15–60 min). No disk persistence.
+- Logging: `urlmeta-start|finish|cache-hit|blocked|timeout` (no content logged).
+
+Config (proposed):
+
+```yaml
+url_metadata:
+  enabled: true
+  max_per_message: 2
+  timeout_seconds: 1.5
+  total_budget_seconds: 3.0
+  max_bytes: 131072
+  allow_domains: ["youtube.com", "youtu.be"]
+  deny_domains: []
+  prefer_oembed: true
+  include_thumbnail: false
+  cache_ttl_seconds: 1800
+  user_agent: "DiscordLLMBot/1.0 (+https://example.com)"
+```
+
+Tasks:
+
+- [ ] Add `UrlMetadataService` with fetch/parse/caching.
+- [ ] URL detection helper and normalization (strip utm params).
+- [ ] Router: if link‑only and enabled, call service and inject `[Link metadata]` system block before template context.
+- [ ] ConfigService getters + safe defaults.
+- [ ] Unit tests (YouTube oEmbed, generic OG page, timeouts, cache‑hit path).
+
+Acceptance Criteria:
+
+- For a YouTube link‑only message, the reply includes video title and channel context without asking the user for a question.
+- Metadata block stays within a tight token budget and is omitted on timeout/over‑budget.
+- Works in both Discord and Web paths; no disk persistence of fetched content.
+
 ## 3) Observability Add-ons (Optional)
 
 - [ ] Capture token usage per reply in logs and/or metrics.

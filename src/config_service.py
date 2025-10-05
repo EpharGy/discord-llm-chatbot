@@ -86,6 +86,25 @@ class ConfigService:
             out.add(str(ids))
         return out
 
+    def discord_elevated_user_ids(self) -> set[str]:
+        """Return elevated user IDs from config as strings.
+
+        Config path: discord.elevated_user_ids: ["123", "456"].
+        Accepts strings or numbers; normalizes to strings.
+        """
+        self._maybe_reload()
+        ids = self._cfg.raw.get("discord", {}).get("elevated_user_ids", [])
+        out: set[str] = set()
+        if isinstance(ids, (list, tuple)):
+            for v in ids:
+                try:
+                    out.add(str(v))
+                except Exception:
+                    continue
+        elif ids:
+            out.add(str(ids))
+        return out
+
     def discord_message_char_limit(self) -> int:
         self._maybe_reload()
         try:

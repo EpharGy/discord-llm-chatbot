@@ -8,6 +8,11 @@ _CONFIGURED = False
 _FULL_ENABLED = False
 
 
+class _ErrorOnlyFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: D401
+        return record.levelno >= logging.ERROR
+
+
 class _TzFormatter(logging.Formatter):
     def __init__(self, *args, tz: Optional[str] = None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -104,6 +109,8 @@ def configure_logging(level: Optional[str] = None, tz: Optional[str] = None, fmt
             )
             err_handler.setLevel(logging.ERROR)
             err_handler.setFormatter(_TzFormatter(pattern, tz=tz, datefmt="%Y-%m-%d %H:%M:%S%z"))
+            # Guardrail: even if handler levels are adjusted later, keep errors.log to ERROR+
+            err_handler.addFilter(_ErrorOnlyFilter())
             root.addHandler(err_handler)
         except Exception:
             # Don't break startup due to file I/O

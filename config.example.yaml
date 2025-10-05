@@ -50,7 +50,7 @@ vision:
   enabled: true
   max_images: 4
   models:
-    - x-ai/grok-4-fast:free
+#    - x-ai/grok-4-fast:free
     - google/gemini-2.0-flash-exp:free
     - meta-llama/llama-4-scout:free
     - meta-llama/llama-4-scout
@@ -136,5 +136,8 @@ discord:
     presences: false
     message_char_limit: 2000  # Discords's limit is 2000 characters
     max_response_messages: 2  # how many messages to split a long response into (1 = no splitting)
-    admin_user_ids: # Discord user IDs to class as admin (ie can run / admin commands)
-    - "123456789012345678"
+  admin_user_ids: # Discord user IDs to class as admin (ie can run / admin commands)
+    - '123456789012345678'
+  elevated_user_ids: # Discord user IDs to class as elevated (ie can run / elevated commands)
+    - '123456789012345678'
+    - '234567890123456789'
