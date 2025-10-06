@@ -14,7 +14,7 @@ from .tokenizer_service import TokenizerService
 from .conversation_memory import ConversationMemory
 from .participation_policy import ParticipationPolicy
 from .llm.openrouter_client import OpenRouterClient
-from .llm.kobold_openai_client import KoboldOpenAIClient
+from .llm.openai_compat_client import OpenAICompatClient
 from .llm.multi_backend_client import ContextualMultiBackendClient
 from .conversation_batcher import ConversationBatcher
 from .lore_service import LoreService
@@ -54,28 +54,28 @@ def build_router_from_config(cfg: ConfigService) -> MessageRouter:
         vision_providers.append(orc)
     except Exception:
         pass
-    kob = None
-    kob_cfg = (model_cfg.get("kobold") or {}) if isinstance(model_cfg, dict) else {}
-    if kob_cfg.get("enabled", False):
-        _kob_url = str(kob_cfg.get("base_url", "http://127.0.0.1:5001/v1/chat/completions"))
-        _u = _kob_url.rstrip("/")
+    oai = None
+    oai_cfg = (model_cfg.get("openai") or {}) if isinstance(model_cfg, dict) else {}
+    if oai_cfg.get("enabled", False):
+        _oai_url = str(oai_cfg.get("base_url", "http://127.0.0.1:5001/v1/chat/completions"))
+        _u = _oai_url.rstrip("/")
         if _u.endswith("/v1"):
-            _kob_url = _u + "/chat/completions"
-        kob = KoboldOpenAIClient(
-            base_url=_kob_url,
-            concurrency=int(kob_cfg.get("concurrency", model_cfg.get("concurrency", 2))),
-            timeout=float(kob_cfg.get("timeout", 60.0)),
-            retry_attempts=int(kob_cfg.get("retry_attempts", 1)),
+            _oai_url = _u + "/chat/completions"
+        oai = OpenAICompatClient(
+            base_url=_oai_url,
+            concurrency=int(oai_cfg.get("concurrency", model_cfg.get("concurrency", 2))),
+            timeout=float(oai_cfg.get("timeout", 60.0)),
+            retry_attempts=int(oai_cfg.get("retry_attempts", 1)),
         )
-        get_logger("http_app").info(f"kobold-client-enabled url={_kob_url}")
-        providers.append(kob)
-        nsfw_providers.insert(0, kob)
-        vision_providers.append(kob)
+        get_logger("http_app").info(f"openai-compat-client-enabled url={_oai_url}")
+        providers.append(oai)
+        nsfw_providers.insert(0, oai)
+        vision_providers.append(oai)
 
     order = (model_cfg.get("provider_order") or {}) if isinstance(model_cfg, dict) else {}
     def order_list(kind: str, current: list):
         names = [n.strip().lower() for n in (order.get(kind) or [])]
-        by_name = {"openrouter": orc, "kobold": kob}
+        by_name = {"openrouter": orc, "openai": oai}
         out = []
         for n in names:
             c = by_name.get(n)

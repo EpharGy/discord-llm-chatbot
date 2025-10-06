@@ -52,19 +52,19 @@ model:
       batch: true
     log_image_urls: false
     timeout_multiplier: 1.5
-  # Optional local OpenAI-compatible backend (e.g., kobold.cpp with --api)
-  kobold:
+  # Optional local OpenAI-compatible backend (e.g., llama.cpp, LM Studio, textgen-webui in OpenAI mode)
+  openai:
     enabled: false
     base_url: http://127.0.0.1:5001/v1/chat/completions
     concurrency: 2
     timeout: 60.0
     retry_attempts: 1
 
-  # Provider selection order per context (names: openrouter, kobold)
+  # Provider selection order per context (names: openrouter, openai)
   provider_order:
-    normal: [openrouter, kobold]
-    nsfw: [kobold, openrouter]
-    vision: [openrouter, kobold]
+  normal: [openrouter, openai]
+  nsfw: [openai, openrouter]
+  vision: [openrouter, openai]
   
   # base_url: https://openrouter.ai/api/v1/chat/completions  # override if needed
   

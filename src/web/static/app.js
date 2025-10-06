@@ -172,7 +172,7 @@
       if (j && j.default_user_name) { defaultUser = j.default_user_name; if (nameEl && !nameEl.value) nameEl.value = defaultUser; }
       if (j && j.token_required && secNoteEl) {
         secNoteEl.style.display = '';
-        secNoteEl.textContent = 'Note: This server requires an API bearer token. The built-in web UI works only when no token is set.';
+        secNoteEl.textContent = 'Note: This server requires an API bearer token.';
         if (tokenHelpEl) {
           tokenHelpEl.style.display = '';
           tokenHelpEl.textContent = '';

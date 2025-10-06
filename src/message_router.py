@@ -1182,68 +1182,83 @@ class MessageRouter:
         stops = self.model_cfg.get('stop')
         correlation_id = f"{cid}-batch"
         reply = None
-        for idx, model_name in enumerate(models_to_try):
-            if not model_name:
-                continue
-            try:
-                start_ts = datetime.now(timezone.utc)
-                # Batch nsfw detection comes from earlier is_nsfw used to build system message
-                _nsfw_batch = False
+        # Recompute nsfw and build base context for provider selection
+        try:
+            if channel is not None:
+                _nsfw_batch = bool(getattr(channel, 'nsfw', False)) or bool(getattr(getattr(channel, 'parent', None), 'nsfw', False))
+        except Exception:
+            _nsfw_batch = False
+        base_cf = {'channel': cid, 'user': 'batch', 'correlation': correlation_id, 'nsfw': _nsfw_batch, 'has_images': False, 'web': True}
+        # Determine providers for this context if supported
+        provider_indices = [0]
+        try:
+            if hasattr(self.llm, 'providers_for_context'):
+                plist = self.llm.providers_for_context(base_cf)  # type: ignore[attr-defined]
+                if isinstance(plist, list) and len(plist) > 1:
+                    provider_indices = list(range(len(plist)))
+        except Exception:
+            pass
+
+        for p_index in provider_indices:
+            for idx, model_name in enumerate(models_to_try):
+                if not model_name:
+                    continue
                 try:
-                    if channel is not None:
-                        _nsfw_batch = bool(getattr(channel, 'nsfw', False)) or bool(getattr(getattr(channel, 'parent', None), 'nsfw', False))
-                except Exception:
-                    _nsfw_batch = False
-                # Demote router-level start; provider selector logs authoritative start with provider
-                self.log.debug(f"[llm-start] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('nsfw', _nsfw_batch)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
-                result = await self.llm.generate_chat(
-                    messages,
-                    max_tokens=self.model_cfg.get('max_tokens'),
-                    model=model_name,
-                    temperature=self.model_cfg.get('temperature'),
-                    top_p=self.model_cfg.get('top_p'),
-                    stop=stops,
-                    context_fields={'channel': cid, 'user': 'batch', 'correlation': correlation_id, 'nsfw': _nsfw_batch, 'has_images': False},
-                )
-                reply = result.get('text') if isinstance(result, dict) else result
-                provider_used = (result or {}).get('provider') if isinstance(result, dict) else None
-                # Optional prompt/response logging to files for batch/web mode
-                try:
-                    from .config_service import ConfigService
-                    cfg = ConfigService('config.yaml')
-                    if bool(cfg.log_prompts()):
-                        ts_dir = dt.now().strftime('prompts-%Y%m%d-%H%M%S')
-                        out_dir = Path('logs') / ts_dir
-                        out_dir.mkdir(parents=True, exist_ok=True)
-                        import json
-                        p = {
-                            'correlation': correlation_id,
-                            'channel': cid,
-                            'user': 'batch',
-                            'model': model_name,
-                            'messages': messages,
-                        }
-                        (out_dir / 'prompt.json').write_text(json.dumps(p, ensure_ascii=False, indent=2), encoding='utf-8')
-                        lines = []
-                        for m in messages:
-                            lines.append(f"[{m.get('role','')}] {m.get('content','')}")
-                        (out_dir / 'prompt.txt').write_text("\n\n".join(lines), encoding='utf-8')
-                        (out_dir / 'response.txt').write_text(str(reply or ''), encoding='utf-8')
-                except Exception:
-                    pass
-                usage = (result or {}).get('usage') if isinstance(result, dict) else None
-                dur_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
-                if usage and (usage.get('input_tokens') is not None or usage.get('output_tokens') is not None):
-                    self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('provider', provider_used or 'unknown')} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('tokens_in', usage.get('input_tokens','NA'))} {fmt('tokens_out', usage.get('output_tokens','NA'))} {fmt('total_tokens', usage.get('total_tokens','NA'))} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
-                else:
-                    self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('provider', provider_used or 'unknown')} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
+                    start_ts = datetime.now(timezone.utc)
+                    # Demote router-level start; provider selector logs authoritative start with provider
+                    self.log.debug(f"[llm-start] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('nsfw', _nsfw_batch)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
+                    cf_send = dict(base_cf)
+                    cf_send['provider_index'] = p_index
+                    result = await self.llm.generate_chat(
+                        messages,
+                        max_tokens=self.model_cfg.get('max_tokens'),
+                        model=model_name,
+                        temperature=self.model_cfg.get('temperature'),
+                        top_p=self.model_cfg.get('top_p'),
+                        stop=stops,
+                        context_fields=cf_send,
+                    )
+                    reply = result.get('text') if isinstance(result, dict) else result
+                    provider_used = (result or {}).get('provider') if isinstance(result, dict) else None
+                    # Optional prompt/response logging to files for batch/web mode
+                    try:
+                        from .config_service import ConfigService
+                        cfg = ConfigService('config.yaml')
+                        if bool(cfg.log_prompts()):
+                            ts_dir = dt.now().strftime('prompts-%Y%m%d-%H%M%S')
+                            out_dir = Path('logs') / ts_dir
+                            out_dir.mkdir(parents=True, exist_ok=True)
+                            import json
+                            p = {
+                                'correlation': correlation_id,
+                                'channel': cid,
+                                'user': 'batch',
+                                'model': model_name,
+                                'messages': messages,
+                            }
+                            (out_dir / 'prompt.json').write_text(json.dumps(p, ensure_ascii=False, indent=2), encoding='utf-8')
+                            lines = []
+                            for m in messages:
+                                lines.append(f"[{m.get('role','')}] {m.get('content','')}")
+                            (out_dir / 'prompt.txt').write_text("\n\n".join(lines), encoding='utf-8')
+                            (out_dir / 'response.txt').write_text(str(reply or ''), encoding='utf-8')
+                    except Exception:
+                        pass
+                    usage = (result or {}).get('usage') if isinstance(result, dict) else None
+                    dur_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
+                    if usage and (usage.get('input_tokens') is not None or usage.get('output_tokens') is not None):
+                        self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('provider', provider_used or 'unknown')} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('tokens_in', usage.get('input_tokens','NA'))} {fmt('tokens_out', usage.get('output_tokens','NA'))} {fmt('total_tokens', usage.get('total_tokens','NA'))} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
+                    else:
+                        self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('provider', provider_used or 'unknown')} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
+                    break
+                except Exception as e:
+                    self.log.error(f"LLM error with {model_name}: {e}")
+                    reply = None
+            if reply:
                 break
-            except Exception as e:
-                self.log.error(f"LLM error with {model_name}: {e}")
-                reply = None
         if reply is None and allow_auto:
             try:
-                _nsfw_batch = False if ' _nsfw_batch' not in locals() else _nsfw_batch
+                # Keep previously computed nsfw flag
                 start_ts = datetime.now(timezone.utc)
                 result = await self.llm.generate_chat(
                     messages,
@@ -1252,7 +1267,9 @@ class MessageRouter:
                     temperature=self.model_cfg.get('temperature'),
                     top_p=self.model_cfg.get('top_p'),
                     stop=stops,
-                    context_fields={'channel': cid, 'user': 'batch', 'correlation': correlation_id, 'nsfw': _nsfw_batch, 'has_images': False},
+                    # For auto-fallback we keep web/nsfw flags; selector may still choose web list,
+                    # but OpenRouter client will ultimately be targeted due to model label.
+                    context_fields={'channel': cid, 'user': 'batch', 'correlation': correlation_id, 'nsfw': _nsfw_batch, 'has_images': False, 'web': True},
                 )
                 reply = result.get('text') if isinstance(result, dict) else result
                 provider_used = (result or {}).get('provider') if isinstance(result, dict) else None

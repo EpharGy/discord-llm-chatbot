@@ -8,8 +8,8 @@ from ..logger_factory import get_logger
 from ..utils.logfmt import fmt
 
 
-class KoboldOpenAIClient(LLMClient):
-    """Minimal OpenAI-compatible chat client for local backends (e.g., kobold.cpp with OpenAI API).
+class OpenAICompatClient(LLMClient):
+    """Minimal OpenAI-compatible chat client for local backends (e.g., llama.cpp, LM Studio, textgen-webui in OpenAI mode).
 
     Assumes base_url like http://127.0.0.1:5001/v1/chat/completions (no auth header).
     """
@@ -22,7 +22,7 @@ class KoboldOpenAIClient(LLMClient):
         timeout: float = 60.0,
         retry_attempts: int = 1,
     ):
-        self.log = get_logger("KoboldOAIC")
+        self.log = get_logger("OpenAICompat")
         # Normalize: accept /v1, /v1/chat/completions, or /v1/completions
         u = base_url.rstrip("/")
         if u.endswith("/v1"):
@@ -78,6 +78,20 @@ class KoboldOpenAIClient(LLMClient):
         stop: Optional[Sequence[str]] = None,
         context_fields: Optional[dict] = None,
     ) -> dict:
+        # Detect whether this payload includes images (OpenAI-style content parts)
+        def _has_images(msgs: list[dict]) -> bool:
+            try:
+                for m in msgs:
+                    c = m.get("content")
+                    if isinstance(c, list):
+                        for it in c:
+                            if isinstance(it, dict) and it.get("type") in ("image_url", "image"):
+                                return True
+                return False
+            except Exception:
+                return False
+
+        includes_images = _has_images(messages)
         payload: dict = {
             "model": model,
             "messages": messages,
@@ -110,6 +124,10 @@ class KoboldOpenAIClient(LLMClient):
                     # If chat endpoint is missing, try /v1/completions by flattening messages
                     status = e.response.status_code if e.response is not None else 0
                     if status in (404, 405):
+                        # If images are present, do NOT fallback to /completions (would drop images)
+                        if includes_images:
+                            last_exc = e
+                            raise RuntimeError("openai-compat-chat-endpoint-missing-for-images") from e
                         # Build a simple prompt from messages
                         try:
                             parts: list[str] = []
@@ -160,18 +178,28 @@ class KoboldOpenAIClient(LLMClient):
             # Support both chat and completions response shapes
             ch = data.get("choices")[0]
             if "message" in ch and ch["message"] and "content" in ch["message"]:
-                text = (ch["message"]["content"] or "").strip()
+                mc = ch["message"]["content"]
+                if isinstance(mc, list):
+                    # Some servers may return an array of content parts
+                    parts: list[str] = []
+                    for it in mc:
+                        if isinstance(it, dict):
+                            if it.get("type") == "text" and it.get("text"):
+                                parts.append(str(it.get("text")))
+                    text = "\n".join(parts).strip()
+                else:
+                    text = (mc or "").strip()
             else:
                 text = (ch.get("text", "") or "").strip()
         except Exception as e:
-            raise RuntimeError(f"Kobold(OpenAI) response parse error: {data}") from e
+            raise RuntimeError(f"OpenAI-compatible response parse error: {data}") from e
         usage = data.get("usage") or {}
         input_tokens = usage.get("prompt_tokens") or usage.get("input_tokens")
         output_tokens = usage.get("completion_tokens") or usage.get("output_tokens")
         total_tokens = usage.get("total_tokens")
         cf = context_fields or {}
         # Keep internal finish log lean; router will log unified finish with tokens
-        self.log.info(f"llm-finish {fmt('provider','kobold')} {fmt('channel', cf.get('channel'))} {fmt('user', cf.get('user'))} {fmt('correlation', cf.get('correlation'))}")
+        self.log.info(f"llm-finish {fmt('provider','openai')} {fmt('channel', cf.get('channel'))} {fmt('user', cf.get('user'))} {fmt('correlation', cf.get('correlation'))}")
         return {
             "text": text,
             "usage": {
@@ -179,7 +207,7 @@ class KoboldOpenAIClient(LLMClient):
                 "output_tokens": output_tokens,
                 "total_tokens": total_tokens,
             },
-            "provider": "kobold",
+            "provider": "openai",
             "model": model,
         }
 
