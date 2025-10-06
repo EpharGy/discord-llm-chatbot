@@ -1,70 +1,11 @@
-# TODO — Vision and Alternate Model Servers
+# TODO
 
-Date: 2025-09-19
+## 2.6) Persona Hot‑Swap
 
-## 2) Alternate Model Servers
-
-Goal: Support different backends beyond OpenRouter, including self-hosted or local engines.
-
-Candidates:
-
-- Chutes (gateway)
-- NanoGPT-based API shims
-- Local engines (kobold.cpp, llama.cpp, text-generation-webui)
-
-Proposed design:
-
-- Abstraction
-  - Keep `LLMClient` interface and introduce pluggable implementations.
-  - Optional `provider_order` to attempt multiple providers in sequence.
-- Config (example)
-
-  ```yaml
-  model:
-    provider_order: ["openrouter", "local", "auto"]
-    openrouter:
-      name: meta-llama/llama-4-scout:free
-      fallbacks: "meta-llama/llama-3.3-8b-instruct:free"
-      allow_auto_fallback: true
-    local:
-      enabled: false
-      engine: koboldcpp   # koboldcpp | llama.cpp | textgen-webui
-      base_url: http://127.0.0.1:5001
-      timeout_seconds: 8
-      max_tokens: 300
-      temperature: 0.7
-      top_p: 0.9
-  ```
-
-- Behavior
-  - Try providers in order; clear structured logs for each attempt.
-  - Graceful offline message if all fail.
-
-Tasks:
-
-- [ ] Extend config schema for multi-provider support.
-- [ ] Implement `LocalKoboldClient` (HTTP) with chat endpoint mapping.
-- [ ] Add provider orchestrator in `MessageRouter` or a small `ModelRouter` helper.
-- [ ] Logging: surface provider attempts and outcomes.
-- [ ] Docs: usage notes, examples, and limitations.
-
-Acceptance Criteria:
-
-- Bot can run with only OpenRouter (current path) or with local provider when enabled.
-- Clear logs indicate which provider handled the request or why it failed.
-- Easy switch via config without code changes for common cases.
-
-## 2.6) Persona Hot‑Swap & Character Packs
-
-Goal: Switch persona at runtime (without restart) and align bot outward identity (display name, avatar) to the selected persona. Consolidate per-character assets into a character pack referenced by config.
+Goal: Switch persona at runtime (without restart) and align bot outward identity (display name, avatar) to the selected persona.
 
 Design notes:
 
-- Replace `context.persona_path` with `persona.pack_path` (YAML). The pack references:
-  - system_prompt_path (sfw)
-  - system_prompt_path_nsfw (optional)
-  - persona.md (or character.md) details
-  - lore paths (json/md)
 - MessageRouter/PromptTemplateEngine should hot-reload pack changes (already hot-reloads system/persona/lore paths).
 - Add runtime persona select API and optional Discord command.
 - Update outward identity:
@@ -73,10 +14,6 @@ Design notes:
 
 Tasks:
 
-- [ ] Define `persona-pack.yaml` schema and add an example under `personas/packs/mai.yaml`.
-- [ ] ConfigService: add `persona.pack_path` getter and deprecate `context.persona_path`.
-- [ ] PromptTemplateEngine: load from pack (system, nsfw system, persona text, lore list).
-- [ ] LoreService: accept pack-provided paths and priority.
 - [ ] Add `POST /persona/select { pack_path }` in HTTP mode; optional `/persona/reload`.
 - [ ] Discord command `/persona select` gated to admins.
 - [ ] Identity service: helper to change avatar and display name (per guild nickname if needed).
@@ -86,11 +23,12 @@ Acceptance Criteria:
 
 - Switching persona updates prompts immediately for new messages (including NSFW override when in NSFW channels).
 - Optional identity update changes bot nickname/avatar within a guild and via HTTP UI.
-- Backward compatibility: if `context.persona_path` is present, behavior matches current.
 
 ## 2.5) URL Metadata Enrichment (Link‑Only Messages)
 
 Goal: When a message contains only (or mostly) URLs, enrich context by attaching lightweight page/video metadata so the bot can respond meaningfully without a user question.
+
+Note: Maybe incorporate with 2.7 Web Retrieval.
 
 Approach (fast, safe, no secrets):
 
@@ -219,3 +157,10 @@ Acceptance Criteria
 - The web block respects `web.max_fraction` and is omitted when over budget.
 - Entries persist for `retain_turns` responses (unless evicted by TTL) and are clearly labeled.
 - When `mode=native`, the browsing-capable path is used with equivalent logging and budgeting.
+
+## 4) Refactor Log messaging into a cleaner format with less junk
+
+Goal: Improve log clarity by reducing noise and standardizing formats
+
+- [ ] Identify and remove redundant or low-value log messages.
+- [ ] Standardize log message formats for easier parsing and analysis.

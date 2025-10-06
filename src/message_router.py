@@ -777,12 +777,14 @@ class MessageRouter:
                         pass
                     dur_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
                     usage = (result or {}).get("usage") if isinstance(result, dict) else None
+                    # Normalize model label when using OpenAI-compatible backend
+                    model_label = 'openai-compat' if (provider_used == 'openai') else model_name
                     if usage and (usage.get("input_tokens") is not None or usage.get("output_tokens") is not None):
                         self.log.info(
                             f"[llm-finish] "
                             f"{fmt('channel', event.get('channel_name', event['channel_id']))} "
                             f"{fmt('user', event.get('author_name'))} "
-                            f"{fmt('model', model_name)} "
+                            f"{fmt('model', model_label)} "
                             f"{fmt('provider', provider_used or 'unknown')} "
                             f"{fmt('duration_ms', dur_ms)} "
                             f"{fmt('nsfw', _nsfw_flag_detect)} "
@@ -799,7 +801,7 @@ class MessageRouter:
                             f"[llm-finish] "
                             f"{fmt('channel', event.get('channel_name', event['channel_id']))} "
                             f"{fmt('user', event.get('author_name'))} "
-                            f"{fmt('model', model_name)} "
+                            f"{fmt('model', model_label)} "
                             f"{fmt('provider', provider_used or 'unknown')} "
                             f"{fmt('duration_ms', dur_ms)} "
                             f"{fmt('nsfw', _nsfw_flag_detect)} "
@@ -1169,6 +1171,11 @@ class MessageRouter:
         try:
             if channel is not None:
                 _nsfw_batch = bool(getattr(channel, 'nsfw', False)) or bool(getattr(getattr(channel, 'parent', None), 'nsfw', False))
+            # Apply participation.allow_nsfw gate
+            from .config_service import ConfigService
+            cfg = ConfigService('config.yaml')
+            if not bool(cfg.participation().get('allow_nsfw', True)):
+                _nsfw_batch = False
         except Exception:
             _nsfw_batch = False
         cfg_models = self.model_cfg.get('models')
@@ -1265,10 +1272,18 @@ class MessageRouter:
                         pass
                     usage = (result or {}).get('usage') if isinstance(result, dict) else None
                     dur_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
+                    # Hide model when using openai-compatible backend
+                    hide_model = (provider_used == 'openai')
                     if usage and (usage.get('input_tokens') is not None or usage.get('output_tokens') is not None):
-                        self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('provider', provider_used or 'unknown')} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('tokens_in', usage.get('input_tokens','NA'))} {fmt('tokens_out', usage.get('output_tokens','NA'))} {fmt('total_tokens', usage.get('total_tokens','NA'))} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
+                        if hide_model:
+                            self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('provider', provider_used or 'unknown')} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('tokens_in', usage.get('input_tokens','NA'))} {fmt('tokens_out', usage.get('output_tokens','NA'))} {fmt('total_tokens', usage.get('total_tokens','NA'))} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
+                        else:
+                            self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('provider', provider_used or 'unknown')} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('tokens_in', usage.get('input_tokens','NA'))} {fmt('tokens_out', usage.get('output_tokens','NA'))} {fmt('total_tokens', usage.get('total_tokens','NA'))} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
                     else:
-                        self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('provider', provider_used or 'unknown')} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
+                        if hide_model:
+                            self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('provider', provider_used or 'unknown')} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
+                        else:
+                            self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('provider', provider_used or 'unknown')} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
                     break
                 except Exception as e:
                     self.log.error(f"LLM error with {model_name}: {e}")

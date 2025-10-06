@@ -198,8 +198,8 @@ class OpenAICompatClient(LLMClient):
         output_tokens = usage.get("completion_tokens") or usage.get("output_tokens")
         total_tokens = usage.get("total_tokens")
         cf = context_fields or {}
-        # Keep internal finish log lean; router will log unified finish with tokens
-        self.log.info(f"llm-finish {fmt('provider','openai')} {fmt('channel', cf.get('channel'))} {fmt('user', cf.get('user'))} {fmt('correlation', cf.get('correlation'))}")
+        # Keep internal finish log at debug to avoid duplicate with router-level [llm-finish]
+        self.log.debug(f"[llm-provider-finish] {fmt('provider','openai')} {fmt('channel', cf.get('channel'))} {fmt('user', cf.get('user'))} {fmt('correlation', cf.get('correlation'))}")
         return {
             "text": text,
             "usage": {

@@ -101,8 +101,8 @@
     if (!content) return;
     var user = getUser();
   setStatus('Message sent, awaiting response.', 'busy');
-    var headers = { 'Content-Type': 'application/json' };
-    if (tokenRequired && tokenEl && tokenEl.value.trim()) headers['Authorization'] = 'Bearer ' + tokenEl.value.trim();
+  var headers = { 'Content-Type': 'application/json' };
+  if (tokenEl && tokenEl.value && tokenEl.value.trim()) headers['Authorization'] = 'Bearer ' + tokenEl.value.trim();
     // Render the user bubble immediately
     appendRawHtml(bubble(user, mdToHtml(content), 'user'));
   var provider = null; try { if (providerEl && providerEl.value) provider = providerEl.value; } catch(_) {}
@@ -154,8 +154,8 @@
     if (resetEl) resetEl.addEventListener('click', function(){
       if (!confirm('Start a brand new chat? This clears the current session.')) return;
       setStatus('Resetting…');
-      var headers = {};
-      if (tokenRequired && tokenEl && tokenEl.value.trim()) headers['Authorization'] = 'Bearer ' + tokenEl.value.trim();
+  var headers = {};
+  if (tokenEl && tokenEl.value && tokenEl.value.trim()) headers['Authorization'] = 'Bearer ' + tokenEl.value.trim();
       fetch('/reset', { method: 'POST', headers: headers })
         .then(function(res){ if (!res.ok) { return res.text().then(function(t){ throw new Error(t); }); } return res.json(); })
         .then(function(){ if (logEl) logEl.textContent = ''; setStatus('Ready for new Message.'); })

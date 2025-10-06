@@ -55,7 +55,14 @@ class PromptTemplateEngine:
             pass
 
     def _maybe_apply_nsfw_override(self, is_nsfw: bool) -> None:
-        if not is_nsfw:
+        # Honor participation.allow_nsfw toggle; when false, never switch to NSFW system prompt
+        try:
+            from .config_service import ConfigService
+            cfg = ConfigService("config.yaml")
+            allow_nsfw = bool(cfg.participation().get("allow_nsfw", True))
+        except Exception:
+            allow_nsfw = True
+        if not is_nsfw or not allow_nsfw:
             return
         try:
             from .config_service import ConfigService

@@ -145,9 +145,10 @@ class ContextualMultiBackendClient(LLMClient):
         corr = cf.get('correlation')
         nsfw = bool(cf.get('nsfw'))
         has_images = bool(cf.get('has_images'))
-        # Unified start log with provider and model label
+        # Unified start log with provider and model label; normalize model for openai-compat
+        model_disp = 'openai-compat' if p.__class__.__name__ == 'OpenAICompatClient' else model
         self.log.info(
-            f"[llm-start] channel={chan!r} user={user!r} model={model!r} provider={p.__class__.__name__} nsfw={nsfw} has_images={has_images} correlation={corr!r}"
+            f"[llm-start] channel={chan!r} user={user!r} model={model_disp!r} provider={p.__class__.__name__} nsfw={nsfw} has_images={has_images} correlation={corr!r}"
         )
         return await p.generate_chat(
             messages,
@@ -185,8 +186,9 @@ class ContextualMultiBackendClient(LLMClient):
         corr = cf.get('correlation')
         nsfw = bool(cf.get('nsfw'))
         has_images = bool(cf.get('has_images'))
+        model_disp = 'openai-compat' if p.__class__.__name__ == 'OpenAICompatClient' else model
         self.log.info(
-            f"[llm-start] channel={chan!r} user={user!r} model={model!r} provider={p.__class__.__name__} nsfw={nsfw} has_images={has_images} correlation={corr!r}"
+            f"[llm-start] channel={chan!r} user={user!r} model={model_disp!r} provider={p.__class__.__name__} nsfw={nsfw} has_images={has_images} correlation={corr!r}"
         )
         return await p.generate_text(
             prompt,

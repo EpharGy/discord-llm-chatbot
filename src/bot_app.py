@@ -59,6 +59,12 @@ async def main() -> None:
     queue = MentionsQueue()
     batcher = ConversationBatcher()
     prev_conv_active: dict[str, bool] = {}
+    # Persona diagnostics
+    try:
+        for w in (config.persona_diagnostics() or []):
+            logger.warning(w)
+    except Exception:
+        pass
 
     model_cfg = config.model()
     # Build providers based on config

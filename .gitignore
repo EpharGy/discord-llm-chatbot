@@ -39,7 +39,8 @@ lore/*
 
 # Personas: ignore everything except shipped default persona
 personas/*
-!personas/default.md
+!personas/default/*
+
 
 # Prompts: ignore everything except shipped base templates
 prompts/*

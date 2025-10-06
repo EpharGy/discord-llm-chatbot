@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 import yaml
 
 
@@ -19,6 +20,11 @@ class ConfigService:
             self._mtime_ns = self._path.stat().st_mtime_ns
         except Exception:
             self._mtime_ns = 0
+    # Persona config cache
+        self._persona_name_cache: str | None = None
+        self._persona_yaml_path: Path | None = None
+        self._persona_yaml_mtime: int = 0
+        self._persona_cfg_cache: dict | None = None
 
     def _maybe_reload(self) -> None:
         try:
@@ -41,27 +47,208 @@ class ConfigService:
         return self._cfg.raw.get("rate_limits", {})
 
     def participation(self) -> dict:
-        return self._cfg.raw.get("participation", {})
+        self._maybe_reload()
+        base = self._cfg.raw.get("participation", {}) or {}
+        # Merge/override with persona-provided name aliases; fallback to default persona when missing
+        out = dict(base)
+        pc = self._persona_cfg() or {}
+        aliases = pc.get("name_aliases") or (pc.get("participation", {}) or {}).get("name_aliases")
+        if not aliases:
+            dpc = self._persona_cfg_for("default") or {}
+            aliases = dpc.get("name_aliases") or (dpc.get("participation", {}) or {}).get("name_aliases")
+        if isinstance(aliases, (list, tuple)):
+            try:
+                out["name_aliases"] = [str(a) for a in aliases if str(a).strip()]
+            except Exception:
+                pass
+        return out
 
     def context(self) -> dict:
         return self._cfg.raw.get("context", {})
 
-    def persona_path(self) -> str:
+    # ---------- Persona folder-based configuration ----------
+    def persona_name(self) -> str:
+        """Return the selected persona folder name (top-level 'persona'), default 'default'.
+
+        Only allows safe folder names (alnum, dash, underscore). Falls back to 'default'.
+        """
         self._maybe_reload()
-        return str(self.context().get("persona_path", "personas/default.md"))
+        name = self._cfg.raw.get("persona") or self.context().get("persona")
+        if not isinstance(name, str) or not name.strip():
+            name = "default"
+        name = name.strip()
+        if not re.match(r"^[A-Za-z0-9_-]+$", name):
+            name = "default"
+        return name
+
+    def _persona_root(self) -> Path:
+        return Path("personas") / self.persona_name()
+
+    def _persona_root_for(self, name: str) -> Path:
+        return Path("personas") / name
+
+    def _persona_yaml_candidates(self) -> list[Path]:
+        root = self._persona_root()
+        return [root / "default.yaml", root / f"{self.persona_name()}.yaml"]
+
+    def _persona_yaml_candidates_for(self, name: str) -> list[Path]:
+        root = self._persona_root_for(name)
+        return [root / "default.yaml", root / f"{name}.yaml"]
+
+    def _persona_cfg(self) -> dict:
+        """Load persona YAML config from personas/<name>/default.yaml (or <name>.yaml).
+
+        Caches and reloads when the YAML file changes. Returns {} if missing.
+        Expected keys (relative to persona root unless absolute):
+          - system_prompt
+          - system_prompt_nsfw
+          - context_template
+          - persona_file
+          - name_aliases
+          - lore.paths: [list]
+        """
+        try:
+            # Determine current yaml path
+            ypath = None
+            for p in self._persona_yaml_candidates():
+                if p.exists():
+                    ypath = p
+                    break
+            if ypath is None:
+                self._persona_yaml_path = None
+                self._persona_yaml_mtime = 0
+                self._persona_cfg_cache = {}
+                return {}
+            st = ypath.stat().st_mtime_ns
+            if self._persona_yaml_path == ypath and self._persona_yaml_mtime == st and self._persona_cfg_cache is not None:
+                return self._persona_cfg_cache
+            # Reload
+            with ypath.open("r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            if not isinstance(data, dict):
+                data = {}
+            self._persona_yaml_path = ypath
+            self._persona_yaml_mtime = st
+            self._persona_cfg_cache = data
+            return data
+        except Exception:
+            self._persona_cfg_cache = {}
+            return {}
+
+    def _persona_cfg_for(self, name: str) -> dict:
+        try:
+            for p in self._persona_yaml_candidates_for(name):
+                if p.exists():
+                    with p.open("r", encoding="utf-8") as f:
+                        d = yaml.safe_load(f) or {}
+                        return d if isinstance(d, dict) else {}
+            return {}
+        except Exception:
+            return {}
+
+    def _resolve_rel(self, path_val: str | None, root: Path) -> Path | None:
+        if not path_val or not isinstance(path_val, str) or not path_val.strip():
+            return None
+        p = Path(path_val)
+        if not p.is_absolute():
+            p = root / path_val
+        return p
+
+    def persona_path(self) -> str:
+        """Return path to the persona markdown file, derived from persona YAML or sensible defaults.
+
+        Resolution order:
+          1) personas/<name>/<persona_file> if specified in persona YAML
+          2) personas/<name>/persona.md if exists
+          3) personas/<name>.md if exists
+          4) personas/default.md (legacy fallback)
+        """
+        self._maybe_reload()
+        root = self._persona_root()
+        pc = self._persona_cfg()
+        # 1) From YAML
+        # Support either 'persona_file' or 'persona' in YAML
+        rel = None
+        if isinstance(pc, dict):
+            rel = pc.get("persona_file") or pc.get("persona")
+        if isinstance(rel, str) and rel.strip():
+            p = self._resolve_rel(rel, root)
+            if p is not None and p.exists():
+                return str(p)
+            # Fallback to default persona file if selected one missing
+            dpc = self._persona_cfg_for("default")
+            droot = self._persona_root_for("default")
+            drel = (dpc.get("persona_file") or dpc.get("persona")) if isinstance(dpc, dict) else None
+            dp = self._resolve_rel(drel, droot)
+            if dp is not None and dp.exists():
+                return str(dp)
+        # 2) Conventional defaults
+        for cand in [root / "persona.md", Path("personas") / f"{self.persona_name()}.md", Path("personas") / "default.md"]:
+            try:
+                if cand.exists():
+                    return str(cand)
+            except Exception:
+                continue
+        return str(root / "persona.md")
 
     def system_prompt_path(self) -> str:
         self._maybe_reload()
-        return str(self.context().get("system_prompt_path", "prompts/system.txt"))
+        pc = self._persona_cfg()
+        root = self._persona_root()
+        v = pc.get("system_prompt") if isinstance(pc, dict) else None
+        # Use persona value if exists
+        p = self._resolve_rel(v, root)
+        if p is not None and p.exists():
+            return str(p)
+        # Fallback to default persona
+        dpc = self._persona_cfg_for("default")
+        droot = self._persona_root_for("default")
+        dv = dpc.get("system_prompt") if isinstance(dpc, dict) else None
+        dp = self._resolve_rel(dv, droot)
+        if dp is not None and dp.exists():
+            return str(dp)
+        # Finally, hard fallback under default persona folder
+        return str((self._persona_root_for("default") / "system.txt"))
 
     def system_prompt_path_nsfw(self) -> str | None:
         self._maybe_reload()
-        v = self.context().get("system_prompt_path_nsfw")
-        return str(v) if v else None
+        pc = self._persona_cfg()
+        root = self._persona_root()
+        v = pc.get("system_prompt_nsfw") if isinstance(pc, dict) else None
+        p = self._resolve_rel(v, root)
+        if p is not None and p.exists():
+            return str(p)
+        # Fallback default persona nsfw
+        dpc = self._persona_cfg_for("default")
+        droot = self._persona_root_for("default")
+        dv = dpc.get("system_prompt_nsfw") if isinstance(dpc, dict) else None
+        dp = self._resolve_rel(dv, droot)
+        if dp is not None and dp.exists():
+            return str(dp)
+        # Finally, hard fallback under default persona folder if exists
+        dpp = self._persona_root_for("default") / "system_nsfw.txt"
+        try:
+            return str(dpp) if dpp.exists() else None
+        except Exception:
+            return None
 
     def context_template_path(self) -> str:
         self._maybe_reload()
-        return str(self.context().get("context_template_path", "prompts/context_template.txt"))
+        pc = self._persona_cfg()
+        root = self._persona_root()
+        v = pc.get("context_template") if isinstance(pc, dict) else None
+        p = self._resolve_rel(v, root)
+        if p is not None and p.exists():
+            return str(p)
+        # Fallback default persona template
+        dpc = self._persona_cfg_for("default")
+        droot = self._persona_root_for("default")
+        dv = dpc.get("context_template") if isinstance(dpc, dict) else None
+        dp = self._resolve_rel(dv, droot)
+        if dp is not None and dp.exists():
+            return str(dp)
+        # Finally, hard fallback under default persona folder
+        return str((self._persona_root_for("default") / "context_template.txt"))
 
 
     def discord_intents(self) -> dict:
@@ -160,12 +347,47 @@ class ConfigService:
         return bool(lore.get("enabled", False))
 
     def lore_paths(self) -> list[str]:
+        """Merge global lore paths with persona-provided lore paths (if any).
+
+        Persona YAML may include:
+          lore:
+            paths: ["relative/to/persona", "/abs/path.md"]
+        These are resolved relative to the persona root when not absolute.
+        """
         self._maybe_reload()
-        lore = self.context().get("lore", {})
+        # Global
+        lore = self.context().get("lore", {}) or {}
         paths = lore.get("paths", [])
         if isinstance(paths, str):
-            return [paths]
-        return [str(p) for p in (paths or [])]
+            glob_list = [paths]
+        else:
+            glob_list = [str(p) for p in (paths or [])]
+        # Persona
+        pc = self._persona_cfg()
+        add_list: list[str] = []
+        try:
+            plore = []
+            if isinstance(pc, dict):
+                lv = pc.get("lore")
+                if isinstance(lv, dict):
+                    plore = lv.get("paths", []) or []
+                elif isinstance(lv, list):
+                    plore = lv
+            if isinstance(plore, str):
+                plore = [plore]
+            root = self._persona_root()
+            for v in (plore or []):
+                try:
+                    p = Path(v)
+                    if not p.is_absolute():
+                        p = root / v
+                    if p.exists():
+                        add_list.append(str(p))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return list(dict.fromkeys(glob_list + add_list))
 
     def lore_max_fraction(self) -> float:
         self._maybe_reload()
@@ -314,3 +536,94 @@ class ConfigService:
             return float(v.get("timeout_multiplier", 1.5))
         except Exception:
             return 1.5
+
+    # ---------- Diagnostics ----------
+    def persona_diagnostics(self) -> list[str]:
+        """Return a list of human-readable warnings about missing persona assets.
+
+        Checks only files explicitly referenced by the selected persona YAML. If a referenced
+        file is missing, a warning is emitted indicating that default persona fallbacks will be used.
+        Also warns if default persona fallbacks are missing.
+        """
+        warnings: list[str] = []
+        try:
+            name = self.persona_name()
+            root = self._persona_root()
+            pc = self._persona_cfg() or {}
+            # Helper to check a rel path exists under a root
+            def _check(label: str, rel: str | None, r: Path, is_optional: bool = False):
+                if not rel or not isinstance(rel, str) or not rel.strip():
+                    return
+                p = self._resolve_rel(rel, r)
+                try:
+                    if p is None or not p.exists():
+                        warnings.append(f"persona '{name}': missing {label} -> {rel} (root={r}), will fall back to default persona")
+                except Exception:
+                    warnings.append(f"persona '{name}': unable to access {label} -> {rel} (root={r})")
+
+            # Check referenced files in selected persona
+            _check("system_prompt", pc.get("system_prompt"), root)
+            _check("system_prompt_nsfw", pc.get("system_prompt_nsfw"), root, is_optional=True)
+            _check("context_template", pc.get("context_template"), root, is_optional=True)
+            _check("persona file", (pc.get("persona_file") or pc.get("persona")), root)
+            # Lore list (accept list or lore.paths)
+            lore_list = []
+            lv = pc.get("lore")
+            if isinstance(lv, dict):
+                lore_list = lv.get("paths", []) or []
+            elif isinstance(lv, list):
+                lore_list = lv
+            if isinstance(lore_list, str):
+                lore_list = [lore_list]
+            for rel in (lore_list or []):
+                p = self._resolve_rel(rel, root)
+                try:
+                    if p is None or not p.exists():
+                        warnings.append(f"persona '{name}': lore missing -> {rel} (root={root})")
+                except Exception:
+                    warnings.append(f"persona '{name}': unable to access lore -> {rel} (root={root})")
+
+            # Validate default persona fallbacks exist when needed
+            droot = self._persona_root_for("default")
+            dpc = self._persona_cfg_for("default") or {}
+            def _exists(rel: str | None, r: Path) -> bool:
+                p = self._resolve_rel(rel, r)
+                try:
+                    return bool(p and p.exists())
+                except Exception:
+                    return False
+            # If selected persona points to something missing, ensure default has it
+            def _ensure_default(label: str, key: str, hard_fallback: str | None = None):
+                rel = pc.get(key)
+                if isinstance(rel, str) and rel.strip():
+                    p = self._resolve_rel(rel, root)
+                    missing = not (p and p.exists())
+                    if missing:
+                        drel = dpc.get(key)
+                        if not _exists(drel, droot):
+                            # Try hard fallback file under default folder if provided
+                            if hard_fallback:
+                                hf = droot / hard_fallback
+                                if not hf.exists():
+                                    warnings.append(f"default persona: missing {label} fallback -> {hard_fallback}")
+                            else:
+                                warnings.append(f"default persona: missing {label} referenced in YAML")
+            _ensure_default("system_prompt", "system_prompt", hard_fallback="system.txt")
+            _ensure_default("system_prompt_nsfw", "system_prompt_nsfw", hard_fallback="system_nsfw.txt")
+            _ensure_default("context_template", "context_template", hard_fallback="context_template.txt")
+            # Persona file fallback
+            prel = (pc.get("persona_file") or pc.get("persona"))
+            if isinstance(prel, str) and prel.strip():
+                pp = self._resolve_rel(prel, root)
+                if not (pp and pp.exists()):
+                    # Check default persona file
+                    dprel = (dpc.get("persona_file") or dpc.get("persona"))
+                    dpp = self._resolve_rel(dprel, droot)
+                    if not (dpp and dpp.exists()):
+                        # Check conventional default.md
+                        if not (droot / "persona.md").exists() and not (Path("personas") / "default.md").exists():
+                            warnings.append("default persona: missing persona markdown (persona.md or default.md)")
+        except Exception:
+            # Diagnostics should never crash startup
+            pass
+        return warnings
