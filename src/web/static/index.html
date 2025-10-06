@@ -8,17 +8,23 @@
   <style>
   :root { --space-1: 0.5rem; --space-2: 1rem; --maxw: 960px; }
   * { box-sizing: border-box; }
-  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: var(--space-2); line-height: 1.35; }
-  .container { max-width: var(--maxw); margin: 0 auto; }
-  #controls { margin-bottom: var(--space-1); display: grid; grid-template-columns: auto 1fr auto; gap: var(--space-1); align-items: center; }
+  html, body { height: 100%; }
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: var(--space-2); line-height: 1.35; min-height: 100vh; }
+  .container { max-width: var(--maxw); margin: 0 auto; display: grid; grid-template-rows: auto auto 1fr auto; gap: var(--space-1); height: calc(100vh - (var(--space-2) * 2)); }
+  #controls { display: grid; grid-template-columns: auto auto minmax(160px, 1fr) auto auto minmax(240px, 1fr); gap: var(--space-1); align-items: center; }
+  .note { font-size: 0.95rem; color: #666; }
   #controls input { width: 100%; }
-  #log { white-space: normal; border: 1px solid #ccc; padding: var(--space-2); height: 50vh; overflow: auto; margin-bottom: var(--space-2); border-radius: 6px; background: #fff; }
+  input::placeholder { color: #888; font-style: italic; }
+  .dark input::placeholder { color: #9ca3af; }
+  #log { white-space: normal; border: 1px solid #ccc; padding: var(--space-2); overflow: auto; border-radius: 6px; background: #fff; min-height: 0; }
     /* message bubbles */
     #log { display: flex; flex-direction: column; gap: 0.5rem; }
     .bubble { max-width: 85%; padding: 0.6rem 0.8rem; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
     .bubble.bot { background: #f1f3f4; color: #111; margin-right: auto; }
     .bubble.user { background: #e8f0fe; color: #111; margin-left: auto; }
-    .bubble .author { font-weight: 600; margin-bottom: 0.25rem; opacity: 0.8; font-size: 0.95rem; }
+    .bubble .author { font-weight: 700; margin-bottom: 0.25rem; font-size: 0.95rem; }
+    .bubble.bot .author { color: #1d4ed8; }
+    .bubble.user .author { color: #065f46; }
     .bubble .content p { margin: 0.25rem 0; }
   /* Avoid double-background inside bubbles: keep code blocks transparent with a subtle border */
   .bubble .content pre { background: transparent; border: 1px solid #e2e8f0; padding: 0.5rem; border-radius: 6px; }
@@ -39,8 +45,10 @@
     #input-row .btns { display: flex; gap: var(--space-1); }
     input, button, textarea { font-size: 1rem; padding: 0.5rem 0.75rem; }
     button { cursor: pointer; }
-    #status { margin-top: 0.5rem; color: #555 }
-    #security-note, #token-help { margin-top: 0.25rem; color: #888; font-size: 0.9rem }
+  #status { margin-top: 0.25rem; font-weight: 600; }
+  #status.ok { color: #16794e; }
+  #status.busy { color: #b91c1c; }
+  /* token note removed */
     #token-row input { width: 100%; max-width: 420px; }
     #jumpBtn { position: fixed; right: 1rem; bottom: 6rem; display: none; padding: 0.5rem 0.75rem; border-radius: 20px; border: 1px solid #ccc; background: #fff; color: #111; box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
     .dark { background: #0f1115; color: #e6e6e6; }
@@ -48,6 +56,8 @@
   /* Increase contrast for bubbles in dark mode */
   .dark .bubble.bot { background: #171a22; color: #f1f5f9; }
   .dark .bubble.user { background: #13273f; color: #f1f5f9; }
+  .dark .bubble.bot .author { color: #93c5fd; }
+  .dark .bubble.user .author { color: #6ee7b7; }
   /* Ensure code and pre blocks inside the log use dark backgrounds (ID selector overrides) */
   .dark #log pre { background: #0f1420; color: #e6e6e6; }
   .dark #log code { background: #0f1420; color: #e6e6e6; }
@@ -59,8 +69,8 @@
     @media (max-width: 640px) {
       body { margin: var(--space-1); }
       h2 { font-size: 1.1rem; }
-      #log { height: 45vh; padding: var(--space-1); }
-      #controls { grid-template-columns: 1fr auto; }
+      #log { padding: var(--space-1); }
+      #controls { grid-template-columns: 1fr 1fr; row-gap: 0.5rem; }
       #input-row { flex-direction: column; }
       #input-row .btns button { flex: 1 1 0; }
       input, button, textarea { font-size: 1rem; padding: 0.65rem; }
@@ -70,11 +80,14 @@
 </head>
 <body>
   <div class="container">
-  <h2>Web Chat (single room)</h2>
+  <h2 id="headerTitle">Web Chat</h2>
   <div id="controls">
-    <label for="name" style="margin-right:0.5rem">Name:</label>
-    <input id="name" placeholder="You">
     <button id="themeToggle" type="button">Theme</button>
+    <label for="name">Name:</label>
+    <input id="name" placeholder="You">
+    <label for="provider">Provider:</label>
+    <select id="provider" style="min-width:9rem"></select>
+    <input id="token" type="password" placeholder="API token (if required)">
   </div>
   <div id="log"></div>
   <div id="input-row">
@@ -84,13 +97,7 @@
       <button id="resetBtn" type="button">Reset</button>
     </div>
   </div>
-  <div id="status">Ready for new Message.</div>
-  <div id="security-note" style="display:none"></div>
-  <div id="token-help" style="display:none"></div>
-  <div id="token-row" style="margin-top:0.25rem;display:none">
-    <label for="token" style="margin-right:0.5rem;color:#666">API token:</label>
-    <input id="token" type="password" placeholder="Enter token">
-  </div>
+  <div id="status" class="ok">Ready for new Message.</div>
   </div>
   <button id="jumpBtn" type="button">Jump to latest</button>
   <script src="/static/app.js?v=5"></script>

@@ -25,6 +25,7 @@ class ChatIn(BaseModel):
     user_name: str = "web-user"
     channel_id: str | None = None
     content: str
+    provider: str | None = None  # 'openrouter' | 'openai'
 
 
 def build_router_from_config(cfg: ConfigService) -> MessageRouter:
@@ -153,9 +154,30 @@ def create_app() -> FastAPI:
 
     # remove inline /app.js; static serves it
 
+    def _available_providers_from_router() -> list[str]:
+        names: set[str] = set()
+        try:
+            l = getattr(router, 'llm', None)
+            if l is not None:
+                pools = []
+                for attr in ("normal", "nsfw", "vision", "web"):
+                    pools.extend(getattr(l, attr, []) or [])
+                for p in pools:
+                    cls = p.__class__.__name__
+                    if cls == 'OpenRouterClient':
+                        names.add('openrouter')
+                    elif cls == 'OpenAICompatClient':
+                        names.add('openai')
+        except Exception:
+            pass
+        return sorted(names)
+
     @app.get("/web-config")
     async def web_config():
-        return {"bot_name": bot_label, "default_user_name": "You", "token_required": bool(bearer)}
+        provs = _available_providers_from_router()
+        # Prefer openrouter as default if available, unless user persisted choice on client
+        default_provider = 'openrouter' if 'openrouter' in provs else ('openai' if 'openai' in provs else None)
+        return {"bot_name": bot_label, "default_user_name": "You", "token_required": bool(bearer), "providers": provs, "default_provider": default_provider}
 
     @app.post("/chat")
     async def chat(inp: ChatIn, request: Request):
@@ -196,6 +218,12 @@ def create_app() -> FastAPI:
             channel_obj = SimpleNamespace(id=ch_id, name="web-room", nsfw=True, parent=None)
             # Tag web context for provider selection
             event['web'] = True
+            # Optional provider override from UI
+            try:
+                if inp.provider and inp.provider.lower() in ("openrouter", "openai"):
+                    event['provider'] = inp.provider.lower()
+            except Exception:
+                pass
             reply = await router.build_batch_reply(cid=ch_id, events=[event], channel=channel_obj, allow_outside_window=True)
             reply = reply or ""
             if reply:

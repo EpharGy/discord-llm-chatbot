@@ -1189,12 +1189,31 @@ class MessageRouter:
         except Exception:
             _nsfw_batch = False
         base_cf = {'channel': cid, 'user': 'batch', 'correlation': correlation_id, 'nsfw': _nsfw_batch, 'has_images': False, 'web': True}
+        # Map UI-provided provider override to index, if present
+        override_index: int | None = None
+        try:
+            # events list contains the user event; check last one for override
+            if events and isinstance(events[-1], dict):
+                prov = str(events[-1].get('provider','')).strip().lower()
+                if prov in ('openrouter','openai'):
+                    base_cf['provider_name'] = prov
+        except Exception:
+            pass
         # Determine providers for this context if supported
         provider_indices = [0]
         try:
             if hasattr(self.llm, 'providers_for_context'):
                 plist = self.llm.providers_for_context(base_cf)  # type: ignore[attr-defined]
-                if isinstance(plist, list) and len(plist) > 1:
+                # If a specific provider_name was requested, find its index by class
+                prov_name = base_cf.get('provider_name')
+                if prov_name and isinstance(plist, list) and plist:
+                    target_cls = 'OpenRouterClient' if prov_name == 'openrouter' else ('OpenAICompatClient' if prov_name == 'openai' else None)
+                    if target_cls:
+                        for i, p in enumerate(plist):
+                            if p.__class__.__name__ == target_cls:
+                                provider_indices = [i]
+                                break
+                elif isinstance(plist, list) and len(plist) > 1:
                     provider_indices = list(range(len(plist)))
         except Exception:
             pass

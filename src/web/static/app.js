@@ -5,20 +5,23 @@
   var btnEl = $('sendBtn');
   var nameEl = $('name');
   var themeToggleEl = $('themeToggle');
+  var providerEl = $('provider');
   var resetEl = $('resetBtn');
   var jumpEl = $('jumpBtn');
   var bot = 'Bot';
   var defaultUser = 'You';
   var statusEl = $('status');
-  var secNoteEl = $('security-note');
-  var tokenHelpEl = $('token-help');
+  var secNoteEl = null;
+  var tokenHelpEl = null;
   var tokenRowEl = $('token-row');
   var tokenEl = $('token');
   var tokenRequired = false;
+  var headerTitleEl = $('headerTitle');
   var LS_KEY = 'webchat.bearer_token';
   var LS_NAME = 'webchat.name';
   var LS_THEME = 'webchat.theme';
-  function setStatus(t){ if(statusEl){ statusEl.textContent = t || ''; } }
+  var LS_PROVIDER = 'webchat.provider';
+  function setStatus(t, cls){ if(statusEl){ statusEl.textContent = t || ''; statusEl.classList.remove('ok','busy'); if (cls) statusEl.classList.add(cls); } }
   function scroll(){ if (logEl) { logEl.scrollTop = logEl.scrollHeight; } }
   function escapeHtml(s){ return s.replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]); }); }
   function isSafeUrl(u){ return /^https?:\/\//i.test(u); }
@@ -97,15 +100,16 @@
     var content = (msgEl && msgEl.value ? msgEl.value : '').trim();
     if (!content) return;
     var user = getUser();
-    setStatus('Message sent, awaiting response.');
+  setStatus('Message sent, awaiting response.', 'busy');
     var headers = { 'Content-Type': 'application/json' };
     if (tokenRequired && tokenEl && tokenEl.value.trim()) headers['Authorization'] = 'Bearer ' + tokenEl.value.trim();
     // Render the user bubble immediately
     appendRawHtml(bubble(user, mdToHtml(content), 'user'));
-    fetch('/chat', { method: 'POST', headers: headers, body: JSON.stringify({ content: content, user_name: user, user_id: user.toLowerCase() }) })
+  var provider = null; try { if (providerEl && providerEl.value) provider = providerEl.value; } catch(_) {}
+  fetch('/chat', { method: 'POST', headers: headers, body: JSON.stringify({ content: content, user_name: user, user_id: user.toLowerCase(), provider: provider }) })
       .then(function(res){ if (!res.ok) { appendRawHtml(bubble('Error', mdToHtml('Error ' + res.status + ' ' + res.statusText), 'bot')); return res.text().then(function(t){ throw new Error(t); }); } return res.json(); })
-      .then(function(json){ if (!json) return; var reply = (json.reply ? json.reply : '(no reply)'); appendRawHtml(bubble(bot, mdToHtml(reply), 'bot')); if (msgEl) msgEl.value = ''; setStatus('Ready for new Message.'); })
-      .catch(function(e){ appendRawHtml(bubble('Error', mdToHtml(String(e)), 'bot')); setStatus('Ready for new Message.'); });
+  .then(function(json){ if (!json) return; var reply = (json.reply ? json.reply : '(no reply)'); appendRawHtml(bubble(bot, mdToHtml(reply), 'bot')); if (msgEl) msgEl.value = ''; setStatus('Ready for new Message.', 'ok'); })
+  .catch(function(e){ appendRawHtml(bubble('Error', mdToHtml(String(e)), 'bot')); setStatus('Ready for new Message.', 'ok'); });
   }
   function autoGrow(){
     if (!msgEl) return;
@@ -144,6 +148,9 @@
         if (v) localStorage.setItem(LS_KEY, v); else localStorage.removeItem(LS_KEY);
       } catch(_) {}
     });
+    if (providerEl) providerEl.addEventListener('change', function(){
+      try { if (providerEl.value) localStorage.setItem(LS_PROVIDER, providerEl.value); } catch(_) {}
+    });
     if (resetEl) resetEl.addEventListener('click', function(){
       if (!confirm('Start a brand new chat? This clears the current session.')) return;
       setStatus('Resetting…');
@@ -165,25 +172,33 @@
   function init(){
     if (!logEl || !msgEl) { console.log('[ui-error] elements missing'); return; }
   append('[ui-ready]\n');
-  setStatus('Ready for new Message.');
+  setStatus('Ready for new Message.', 'ok');
     bind();
     fetch('/web-config').then(function(r){ return r.json(); }).then(function(j){
-      if (j && j.bot_name) bot = j.bot_name;
+      if (j && j.bot_name) { bot = j.bot_name; if (headerTitleEl) headerTitleEl.textContent = 'Web Chat — ' + bot; }
       if (j && j.default_user_name) { defaultUser = j.default_user_name; if (nameEl && !nameEl.value) nameEl.value = defaultUser; }
-      if (j && j.token_required && secNoteEl) {
-        secNoteEl.style.display = '';
-        secNoteEl.textContent = 'Note: This server requires an API bearer token.';
-        if (tokenHelpEl) {
-          tokenHelpEl.style.display = '';
-          tokenHelpEl.textContent = '';
+      // Provider select
+      try {
+        var options = (j && Array.isArray(j.providers)) ? j.providers : [];
+        var savedProvider = null; try { savedProvider = localStorage.getItem(LS_PROVIDER); } catch(_) {}
+        var defaultProvider = savedProvider || (j && j.default_provider) || 'openrouter';
+        if (providerEl) {
+          providerEl.innerHTML = '';
+          options.forEach(function(p){
+            var opt = document.createElement('option');
+            opt.value = p; opt.textContent = p;
+            if (p === defaultProvider) opt.selected = true;
+            providerEl.appendChild(opt);
+          });
+          if (options.indexOf(defaultProvider) === -1) {
+            var opt = document.createElement('option');
+            opt.value = defaultProvider; opt.textContent = defaultProvider;
+            opt.selected = true;
+            providerEl.appendChild(opt);
+          }
         }
-        tokenRequired = true;
-        if (tokenRowEl) tokenRowEl.style.display = '';
-        try {
-          var saved = localStorage.getItem(LS_KEY);
-          if (saved && tokenEl && !tokenEl.value) tokenEl.value = saved;
-        } catch(_) {}
-      }
+      } catch(_) {}
+      try { var saved = localStorage.getItem(LS_KEY); if (saved && tokenEl && !tokenEl.value) tokenEl.value = saved; } catch(_) {}
     }).catch(function(){});
     console.log('[ui-bound]');
   }
