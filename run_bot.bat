@@ -1,63 +1,36 @@
 @echo off
-setlocal ENABLEDELAYEDEXPANSION
+REM Single-file launcher: open persistent console, ensure venv, run bot, always pause at end.
 
-REM Change to the directory of this script
+REM Relaunch in a persistent console window if not already spawned
+if "%~1"=="_spawn" goto spawned
+start "Discord LLM Bot" cmd /k call "%~f0" _spawn
+goto end
+
+:spawned
 cd /d "%~dp0"
 
-REM Ensure Python is available
 where python >nul 2>&1
-if errorlevel 1 (
-  echo [ERROR] Python not found in PATH. Install Python 3.10+ and try again.
-  pause
-  exit /b 1
-)
+if errorlevel 1 goto no_python
 
-REM Create virtual environment if missing
-if not exist .venv\Scripts\python.exe (
-  echo [SETUP] Creating virtual environment (.venv)...
-  python -m venv .venv
-  if errorlevel 1 (
-    echo [ERROR] Failed to create virtual environment.
-    pause
-    exit /b 1
-  )
-  echo [SETUP] Upgrading pip...
-  call .venv\Scripts\python.exe -m pip install --upgrade pip wheel >nul 2>&1
-  echo [SETUP] Installing dependencies...
-  if exist requirements.txt (
-    call .venv\Scripts\python.exe -m pip install -r requirements.txt
-  ) else (
-    if exist pyproject.toml (
-      call .venv\Scripts\python.exe -m pip install -e .
-    ) else (
-      if exist setup.cfg ( call .venv\Scripts\python.exe -m pip install -e . ) else (
-        if exist setup.py ( call .venv\Scripts\python.exe -m pip install -e . ) else (
-          echo [WARN] No requirements.txt or project metadata found. Skipping dependency install.
-        )
-      )
-    )
-  )
-)
+if exist ".venv\Scripts\python.exe" goto venv_exists
+echo Creating virtual environment (.venv)...
+python -m venv .venv
 
-REM Activate venv
-call .venv\Scripts\activate.bat
-if errorlevel 1 (
-  echo [ERROR] Failed to activate virtual environment.
-  pause
-  exit /b 1
-)
-
-REM Set PYTHONPATH so app can import from src
+:venv_exists
+call ".venv\Scripts\activate.bat"
 set PYTHONPATH=src
-
-echo [RUN] Starting Discord/Web bot...
+echo Starting Discord/Web bot... (Ctrl+C to stop)
+echo.
 python -m src.bot_app
-set EXITCODE=%ERRORLEVEL%
+echo.
+echo Press any key to close this window.
+pause >nul
+goto end
 
-if not %EXITCODE%==0 (
-  echo [ERROR] Bot exited with code %EXITCODE%.
-  pause
-)
+:no_python
+echo Python not found in PATH. Install Python 3.10+ and try again.
+echo.
+pause
 
-endlocal
-exit /b %EXITCODE%
+:end
+exit /b
