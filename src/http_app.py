@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from pathlib import Path
 from .config_service import ConfigService
 from .logger_factory import configure_logging, get_logger
 from .message_router import MessageRouter
@@ -18,6 +19,7 @@ from .llm.openai_compat_client import OpenAICompatClient
 from .llm.multi_backend_client import ContextualMultiBackendClient
 from .conversation_batcher import ConversationBatcher
 from .lore_service import LoreService
+from .web_room_store import WebRoomStore
 
 
 class ChatIn(BaseModel):
@@ -26,6 +28,30 @@ class ChatIn(BaseModel):
     channel_id: str | None = None
     content: str
     provider: str | None = None  # 'openrouter' | 'openai'
+    passcode: str | None = None
+
+
+class RoomSummary(BaseModel):
+    room_id: str
+    name: str
+    last_active: str
+    locked: bool
+    provider: str | None = None
+
+
+class RoomCreateIn(BaseModel):
+    name: str
+    passcode: str | None = None
+
+
+class RoomJoinIn(BaseModel):
+    passcode: str | None = None
+    provider: str | None = None
+
+
+class RoomJoinOut(BaseModel):
+    room: RoomSummary
+    messages: list[dict]
 
 
 def build_router_from_config(cfg: ConfigService) -> MessageRouter:
@@ -115,6 +141,17 @@ def create_app() -> FastAPI:
     log = get_logger("http_app")
     router = build_router_from_config(cfg)
     bearer = cfg.http_auth_bearer_token()
+    # Room store (persist web chat transcripts)
+    room_store = WebRoomStore(Path(__file__).resolve().parent / "web" / "data")
+
+    def _room_summary(meta) -> RoomSummary:
+        return RoomSummary(
+            room_id=meta.room_id,
+            name=meta.name,
+            last_active=meta.last_active,
+            locked=meta.requires_passcode,
+            provider=getattr(meta, "provider", None),
+        )
     # Derive a friendly bot label from participation.name_aliases (first alias, stripped of leading @)
     try:
         aliases = cfg.participation().get("name_aliases", []) or []
@@ -172,6 +209,35 @@ def create_app() -> FastAPI:
             pass
         return sorted(names)
 
+    @app.get("/rooms")
+    async def list_rooms():
+        metas = sorted(room_store.list_rooms(), key=lambda m: m.last_active, reverse=True)
+        rooms = [_room_summary(meta).model_dump() for meta in metas]
+        return {"rooms": rooms}
+
+    @app.post("/rooms", response_model=RoomSummary)
+    async def create_room(payload: RoomCreateIn):
+        if not payload.name.strip():
+            raise HTTPException(status_code=400, detail="Room name is required")
+        try:
+            meta = room_store.create_room(payload.name, payload.passcode)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        log.info(f"room-create {meta.room_id}")
+        return _room_summary(meta)
+
+    @app.post("/rooms/{room_id}/join", response_model=RoomJoinOut)
+    async def join_room(room_id: str, payload: RoomJoinIn):
+        meta = room_store.get_room(room_id)
+        if meta is None:
+            raise HTTPException(status_code=404, detail="Room not found")
+        if not room_store.validate_passcode(room_id, payload.passcode):
+            raise HTTPException(status_code=403, detail="Invalid passcode")
+        if payload.provider:
+            room_store.set_provider(room_id, payload.provider)
+        msgs = room_store.load_messages(room_id)
+        return RoomJoinOut(room=_room_summary(meta), messages=msgs)
+
     @app.get("/web-config")
     async def web_config():
         provs = _available_providers_from_router()
@@ -184,23 +250,39 @@ def create_app() -> FastAPI:
         # Build a minimal event and use the batch reply path to bypass participation policy.
         import datetime
         from types import SimpleNamespace
+
         # Auth if configured
         if bearer:
             auth = request.headers.get("Authorization", "")
-            if not auth.startswith("Bearer ") or auth.split(" ",1)[1].strip() != bearer:
+            if not auth.startswith("Bearer ") or auth.split(" ", 1)[1].strip() != bearer:
                 return JSONResponse({"error": "Unauthorized"}, status_code=401)
-        ch_id = (inp.channel_id or "web-room").strip() or "web-room"
+
+        ch_id = (inp.channel_id or "").strip()
+        if not ch_id:
+            raise HTTPException(status_code=400, detail="room_id required")
+        meta = room_store.get_room(ch_id)
+        if meta is None:
+            raise HTTPException(status_code=404, detail="Room not found")
+        if not room_store.validate_passcode(ch_id, inp.passcode):
+            raise HTTPException(status_code=403, detail="Invalid passcode")
+        if inp.provider:
+            room_store.set_provider(ch_id, inp.provider)
+
         now = datetime.datetime.now(datetime.timezone.utc)
+        now_iso = now.isoformat()
+
         # per-request correlation id
         mid = f"web-{int(now.timestamp()*1000)}"
         try:
             from .utils.correlation import make_correlation_id
+
             correlation_id = make_correlation_id(ch_id, mid)
         except Exception:
             correlation_id = f"{ch_id}-web"
+
         event = {
             "channel_id": ch_id,
-            "channel_name": "web-room",
+            "channel_name": meta.name or ch_id,
             "author_id": inp.user_id,
             "message_id": mid,
             "content": inp.content,
@@ -211,9 +293,21 @@ def create_app() -> FastAPI:
             "guild_name": "WEB",
             "correlation_id": correlation_id,
         }
+
         try:
             # Record user event for context
             router.memory.record(event)
+            room_store.append_message(
+                ch_id,
+                {
+                    "id": mid,
+                    "role": "user",
+                    "author_id": inp.user_id,
+                    "author_name": inp.user_name,
+                    "content": inp.content,
+                    "created_at": now_iso,
+                },
+            )
             # NSFW=true channel stub
             channel_obj = SimpleNamespace(id=ch_id, name="web-room", nsfw=True, parent=None)
             # Tag web context for provider selection
@@ -224,27 +318,49 @@ def create_app() -> FastAPI:
                     event['provider'] = inp.provider.lower()
             except Exception:
                 pass
+
             reply = await router.build_batch_reply(cid=ch_id, events=[event], channel=channel_obj, allow_outside_window=True)
             reply = reply or ""
             if reply:
+                now_bot = datetime.datetime.now(datetime.timezone.utc)
                 router.memory.record({
                     "channel_id": ch_id,
                     "author_id": "bot",
                     "content": reply,
                     "is_bot": True,
-                    "created_at": datetime.datetime.now(datetime.timezone.utc),
+                    "created_at": now_bot,
                     "author_name": bot_label,
                 })
+                room_store.append_message(
+                    ch_id,
+                    {
+                        "id": f"{mid}-bot",
+                        "role": "assistant",
+                        "author_id": "bot",
+                        "author_name": bot_label,
+                        "content": reply,
+                        "created_at": now_bot.isoformat(),
+                    },
+                )
         except Exception as e:
             log.error(f"web-chat-error {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
         return {"reply": reply}
 
     @app.post("/reset")
-    async def reset_chat():
-        """Clear web chat history/state for the single web room."""
+    async def reset_chat(request: Request):
+        """Clear history/state for a specific room."""
         try:
-            ch_id = "web-room"
+            try:
+                payload = await request.json()
+            except Exception:
+                payload = {}
+            ch_id = (payload.get("room_id") or "").strip()
+            if not ch_id:
+                raise HTTPException(status_code=400, detail="room_id required")
+            meta = room_store.get_room(ch_id)
+            if meta is None:
+                raise HTTPException(status_code=404, detail="Room not found")
             # Clear memory and batch buffers
             try:
                 router.memory.clear(ch_id)
@@ -256,7 +372,13 @@ def create_app() -> FastAPI:
                     b.clear(ch_id)
             except Exception:
                 pass
+            try:
+                room_store.clear_room(ch_id)
+            except Exception:
+                pass
             return {"ok": True}
+        except HTTPException:
+            raise
         except Exception as e:
             log.error(f"web-reset-error {e}")
             return JSONResponse({"error": str(e)}, status_code=500)

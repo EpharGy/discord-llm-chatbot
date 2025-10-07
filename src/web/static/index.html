@@ -6,24 +6,36 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Web Chat</title>
   <style>
-  :root { --space-1: 0.5rem; --space-2: 1rem; --maxw: 960px; }
+  :root {
+    --space-1: 0.5rem;
+    --space-2: 1rem;
+    --maxw: 960px;
+    --bot-accent: #1d4ed8;
+    --log-bg: #ffffff;
+    --log-border: #cccccc;
+    --log-bg-dark: #12151b;
+    --log-border-dark: #2d2f36;
+    --bot-bubble-bg: #f1f3f4;
+    --bot-bubble-bg-dark: #171a22;
+  }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: var(--space-2); line-height: 1.35; min-height: 100vh; }
-  .container { max-width: var(--maxw); margin: 0 auto; display: grid; grid-template-rows: auto auto 1fr auto; gap: var(--space-1); height: calc(100vh - (var(--space-2) * 2)); }
+  .container { max-width: var(--maxw); margin: 0 auto; display: grid; grid-template-rows: auto auto auto 1fr auto; gap: var(--space-1); height: calc(100vh - (var(--space-2) * 2)); }
+  #room-controls { display: grid; grid-template-columns: auto minmax(160px, 1fr) minmax(160px, 1fr) auto auto; gap: var(--space-1); align-items: center; }
   #controls { display: grid; grid-template-columns: auto auto minmax(160px, 1fr) auto auto minmax(240px, 1fr); gap: var(--space-1); align-items: center; }
   .note { font-size: 0.95rem; color: #666; }
   #controls input { width: 100%; }
   input::placeholder { color: #888; font-style: italic; }
   .dark input::placeholder { color: #9ca3af; }
-  #log { white-space: normal; border: 1px solid #ccc; padding: var(--space-2); overflow: auto; border-radius: 6px; background: #fff; min-height: 0; }
+  #log { white-space: normal; border: 1px solid var(--log-border); padding: var(--space-2); overflow: auto; border-radius: 6px; background: var(--log-bg); min-height: 0; transition: background-color 0.3s ease, border-color 0.3s ease; }
     /* message bubbles */
     #log { display: flex; flex-direction: column; gap: 0.5rem; }
-    .bubble { max-width: 85%; padding: 0.6rem 0.8rem; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
-    .bubble.bot { background: #f1f3f4; color: #111; margin-right: auto; }
+    .bubble { max-width: 85%; padding: 0.6rem 0.8rem; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); transition: background-color 0.3s ease, color 0.3s ease; }
+    .bubble.bot { background: var(--bot-bubble-bg); color: #111; margin-right: auto; }
     .bubble.user { background: #e8f0fe; color: #111; margin-left: auto; }
     .bubble .author { font-weight: 700; margin-bottom: 0.25rem; font-size: 0.95rem; }
-    .bubble.bot .author { color: #1d4ed8; }
+    .bubble.bot .author { color: var(--bot-accent); }
     .bubble.user .author { color: #065f46; }
     .bubble .content p { margin: 0.25rem 0; }
   /* Avoid double-background inside bubbles: keep code blocks transparent with a subtle border */
@@ -52,11 +64,11 @@
     #token-row input { width: 100%; max-width: 420px; }
     #jumpBtn { position: fixed; right: 1rem; bottom: 6rem; display: none; padding: 0.5rem 0.75rem; border-radius: 20px; border: 1px solid #ccc; background: #fff; color: #111; box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
     .dark { background: #0f1115; color: #e6e6e6; }
-  .dark #log { background: #12151b; border-color: #2d2f36; }
+  .dark #log { background: var(--log-bg-dark); border-color: var(--log-border-dark); }
   /* Increase contrast for bubbles in dark mode */
-  .dark .bubble.bot { background: #171a22; color: #f1f5f9; }
+  .dark .bubble.bot { background: var(--bot-bubble-bg-dark); color: #f1f5f9; }
   .dark .bubble.user { background: #13273f; color: #f1f5f9; }
-  .dark .bubble.bot .author { color: #93c5fd; }
+  .dark .bubble.bot .author { color: var(--bot-accent); }
   .dark .bubble.user .author { color: #6ee7b7; }
   /* Ensure code and pre blocks inside the log use dark backgrounds (ID selector overrides) */
   .dark #log pre { background: #0f1420; color: #e6e6e6; }
@@ -65,11 +77,35 @@
   .dark .bubble .content pre { background: transparent; border: 1px solid #2a2f3a; color: #e6e6e6; }
   .dark .bubble .content code { background: rgba(255,255,255,0.08); color: #e6e6e6; }
   .dark .bubble .author { color: #cbd5e1; opacity: 0.95; }
+  .empty-state { flex: 1 0 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 2rem 1rem; color: #4b5563; gap: 0.5rem; }
+  .empty-state strong { color: var(--bot-accent); }
+  .dark .empty-state { color: #94a3b8; }
+  .dark .empty-state strong { color: var(--bot-accent); }
+  /* Provider-specific tints */
+  body.provider-openrouter {
+    --bot-accent: #2563eb;
+    --log-bg: #f3f6ff;
+    --log-border: #c7d2fe;
+    --log-bg-dark: #151c30;
+    --log-border-dark: #1f2b48;
+    --bot-bubble-bg: #e8efff;
+    --bot-bubble-bg-dark: #1b2540;
+  }
+  body.provider-openai {
+    --bot-accent: #dc2626;
+    --log-bg: #fff5f5;
+    --log-border: #fecaca;
+    --log-bg-dark: #221416;
+    --log-border-dark: #3b1f24;
+    --bot-bubble-bg: #ffe8e8;
+    --bot-bubble-bg-dark: #2b1a1d;
+  }
     .dark a { color: #8ab4f8; }
     @media (max-width: 640px) {
       body { margin: var(--space-1); }
       h2 { font-size: 1.1rem; }
       #log { padding: var(--space-1); }
+      #room-controls { grid-template-columns: 1fr 1fr; row-gap: 0.5rem; }
       #controls { grid-template-columns: 1fr 1fr; row-gap: 0.5rem; }
       #input-row { flex-direction: column; }
       #input-row .btns button { flex: 1 1 0; }
@@ -81,6 +117,13 @@
 <body>
   <div class="container">
   <h2 id="headerTitle">Web Chat</h2>
+  <div id="room-controls">
+    <label for="roomSelect">Room:</label>
+    <select id="roomSelect"></select>
+    <input id="roomPass" type="password" placeholder="Passcode (if required)">
+    <button id="joinRoomBtn" type="button">Join</button>
+    <button id="createRoomBtn" type="button">New Room</button>
+  </div>
   <div id="controls">
     <button id="themeToggle" type="button">Theme</button>
     <label for="name">Name:</label>
@@ -100,6 +143,6 @@
   <div id="status" class="ok">Ready for new Message.</div>
   </div>
   <button id="jumpBtn" type="button">Jump to latest</button>
-  <script src="/static/app.js?v=6"></script>
+  <script src="/static/app.js?v=7"></script>
 </body>
 </html>

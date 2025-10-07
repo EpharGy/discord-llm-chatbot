@@ -1,6 +1,50 @@
 # TODO
 
-## 2.6) Persona Hot‑Swap
+## web chat room handling
+
+Status (2025‑10‑07): the old single "web-room" flow is replaced with passcode-gated rooms that persist to disk (`src/web/data/<room>/messages.jsonl`). The web UI now lists rooms, lets you create/join them with a passcode, shows stored transcripts, and clears history per room. No more default room exists.
+
+### What’s shipped
+
+- ✅ Room creation dialog (name + required passcode) with auto-join.
+- ✅ Room list endpoint + dropdown selector in the UI (shows 🔒 when locked).
+- ✅ Passcode validation on join/chat/reset; passcodes cached locally per browser.
+- ✅ Transcript persistence per room (JSONL) and replay on reload.
+- ✅ Empty-state guidance when no room is joined, plus per-room reset hook.
+
+### Immediate follow-ups
+
+- [ ] Room lifecycle guardrails
+  - [ ] Configurable history retention per room (currently hard-coded 200 msgs via deque/JSONL).
+  - [ ] Background cleanup for inactive rooms (e.g., purge after N days).
+- [ ] Room management UX
+  - [ ] Delete room (backend endpoint + UI button, with confirmation & transcript purge).
+  - [ ] Rename room / change passcode workflow.
+  - [ ] Surface last-active timestamp + sort order in the selector (currently sorted server-side, but UI doesn’t display it).
+- [ ] Multi-user experience
+  - [ ] Decide on real-time sync (polling vs SSE/WebSocket) so two browsers see updates instantly.
+  - [ ] Clarify access model when multiple users share a passcode (do we need per-user labels/state?).
+- [ ] Room-aware reset/analytics
+  - [ ] Show a toast/banner after reset instead of replacing transcript silently.
+  - [ ] Expose room metadata in `/web-config` for future client bootstrapping.
+
+### Longer-term polish / decisions
+
+- [ ] History budget UI hint (“You’re at 150/500 messages”) once retention is configurable.
+- [ ] Allow per-room deletion/archival via API and admin dashboard.
+- [ ] Multi-user indicators (presence, typing) if we go real-time.
+- [ ] User color logic (hash username → theme-aware palette) & theme contrast tweaks.
+- [ ] Optional welcome message / instructions per room on first join.
+- [ ] Evaluate encrypting passcodes at rest or rotating salts (currently salted SHA256 stored on disk).
+
+Reference decisions
+
+- Passcodes are mandatory; creating a room without one is blocked (keeps lightweight security expectations clear).
+- No global/default room: after cleanup, only explicit rooms remain on disk.
+- Transcript format: append-only JSONL per room so we can stream/load chunks later. Keep this in mind if we migrate to SQLite.
+- Frontend auto-joins only when a cached passcode exists; otherwise it stays in empty-state to avoid leaking room names without authorization.
+
+## Persona Hot‑Swap
 
 Goal: Switch persona at runtime (without restart) and align bot outward identity (display name, avatar) to the selected persona.
 
@@ -24,7 +68,7 @@ Acceptance Criteria:
 - Switching persona updates prompts immediately for new messages (including NSFW override when in NSFW channels).
 - Optional identity update changes bot nickname/avatar within a guild and via HTTP UI.
 
-## 2.5) URL Metadata Enrichment (Link‑Only Messages)
+## URL Metadata Enrichment (Link‑Only Messages)
 
 Goal: When a message contains only (or mostly) URLs, enrich context by attaching lightweight page/video metadata so the bot can respond meaningfully without a user question.
 
@@ -85,16 +129,7 @@ Acceptance Criteria:
 - Metadata block stays within a tight token budget and is omitted on timeout/over‑budget.
 - Works in both Discord and Web paths; no disk persistence of fetched content.
 
-## 3) Observability Add-ons (Optional)
-
-- [ ] Capture token usage per reply in logs and/or metrics.
-- [ ] Batch dedupe improvements: track seen message IDs across batch intervals.
-
-## Notes
-
-- Be careful with prompt logging: may contain sensitive content. Keep `LOG_PROMPTS` default off.
-
-## 2.7) Web Retrieval (Scrape/Browse)
+## Web Retrieval (Scrape/Browse)
 
 Goal: Let the bot bring in fresh web content when a user posts a URL or explicitly requests it, while keeping safety, privacy, and token budget under control. Two paths:
 
@@ -158,9 +193,19 @@ Acceptance Criteria
 - Entries persist for `retain_turns` responses (unless evicted by TTL) and are clearly labeled.
 - When `mode=native`, the browsing-capable path is used with equivalent logging and budgeting.
 
-## 4) Refactor Log messaging into a cleaner format with less junk
+## Refactor Log messaging into a cleaner format with less junk
 
 Goal: Improve log clarity by reducing noise and standardizing formats
 
 - [ ] Identify and remove redundant or low-value log messages.
 - [ ] Standardize log message formats for easier parsing and analysis.
+
+## Stats! - Start capturing some stats on usage
+
+Goal: Collect and log basic usage statistics to help understand how the bot is being used and identify areas for improvement
+
+- [ ] Track number of messages LLM has responded to per day/week.
+- [ ] Monitor active users and channels. (only responses to users, not all messages)
+- [ ] cog & /command usage to see what is being used.
+- [ ] Log stats in a lightweight db (e.g., SQLite)
+- [ ] expose stats via a /stats endpoint (admin only), create a simple HTML page with basic stat views.

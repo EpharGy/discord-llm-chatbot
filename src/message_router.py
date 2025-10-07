@@ -166,8 +166,15 @@ class MessageRouter:
                     if not (is_direct or allowed_channel):
                         self.memory.record(event)
                     try:
-                        self.batcher.add(event["channel_id"], event)
-                        self.log.debug(f"batch-enqueue {fmt('channel', event.get('channel_name', event['channel_id']))} {fmt('msg', event.get('message_id',''))}")
+                        added = self.batcher.add(event["channel_id"], event)
+                        if added:
+                            self.log.debug(
+                                f"batch-enqueue {fmt('channel', event.get('channel_name', event['channel_id']))} {fmt('msg', event.get('message_id',''))}"
+                            )
+                        else:
+                            self.log.debug(
+                                f"batch-dedupe {fmt('channel', event.get('channel_name', event['channel_id']))} {fmt('msg', event.get('message_id',''))}"
+                            )
                     except Exception:
                         pass
                     return True

@@ -51,3 +51,6 @@ prompts/*
 !cogs/*
 /cogs/extra_cogs/*
 !/cogs/extra_cogs/COG_GUIDELINES.md
+
+# web runtime data
+/src/web/data/
