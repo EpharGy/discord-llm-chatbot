@@ -21,22 +21,36 @@
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: var(--space-2); line-height: 1.35; min-height: 100vh; }
-  .container { max-width: var(--maxw); margin: 0 auto; display: grid; grid-template-rows: auto auto auto 1fr auto; gap: var(--space-1); height: calc(100vh - (var(--space-2) * 2)); }
-  #room-controls { display: grid; grid-template-columns: auto minmax(160px, 1fr) minmax(160px, 1fr) auto auto; gap: var(--space-1); align-items: center; }
-  #controls { display: grid; grid-template-columns: auto auto minmax(160px, 1fr) auto auto minmax(240px, 1fr); gap: var(--space-1); align-items: center; }
+  body { --user-bubble-bg: #e8f0fe; --user-author-color: #065f46; }
+  .container { max-width: var(--maxw); margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-1); height: calc(100vh - (var(--space-2) * 2)); min-height: 0; }
+  .top-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-1); }
+  .top-bar, .controls-wrapper, #input-row, #status { flex: 0 0 auto; }
+  .controls-toggle { display: inline-flex; align-items: center; gap: 0.35rem; border: 1px solid var(--log-border); background: #fff; color: #111; padding: 0.45rem 0.9rem; border-radius: 999px; font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: background-color 0.2s ease, color 0.2s ease; }
+  .dark .controls-toggle { border-color: var(--log-border-dark); background: #141820; color: #e6e6e6; }
+  .controls-wrapper { display: flex; flex-direction: column; gap: var(--space-1); }
+  .controls-wrapper.collapsed { display: none; }
+  #room-controls, #controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
+  .danger-btn { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+  .danger-btn:hover { background: #fee2e2; }
+  .dark .danger-btn { background: #3f1a1c; color: #fca5a5; border-color: #7f1d1d; }
+  .dark .danger-btn:hover { background: #4a1c20; }
+  #room-controls label, #controls label { font-weight: 600; font-size: 0.95rem; }
+  #room-controls select { min-width: 10rem; max-width: 14rem; }
+  #controls select, #controls input { min-width: 8rem; max-width: 12rem; }
+  #controls button { flex: 0 0 auto; }
   .note { font-size: 0.95rem; color: #666; }
-  #controls input { width: 100%; }
+  #controls input { width: auto; }
   input::placeholder { color: #888; font-style: italic; }
   .dark input::placeholder { color: #9ca3af; }
-  #log { white-space: normal; border: 1px solid var(--log-border); padding: var(--space-2); overflow: auto; border-radius: 6px; background: var(--log-bg); min-height: 0; transition: background-color 0.3s ease, border-color 0.3s ease; }
+  #log { white-space: normal; border: 1px solid var(--log-border); padding: var(--space-2); overflow: auto; border-radius: 6px; background: var(--log-bg); min-height: 0; flex: 1 1 auto; transition: background-color 0.3s ease, border-color 0.3s ease; }
     /* message bubbles */
     #log { display: flex; flex-direction: column; gap: 0.5rem; }
     .bubble { max-width: 85%; padding: 0.6rem 0.8rem; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); transition: background-color 0.3s ease, color 0.3s ease; }
     .bubble.bot { background: var(--bot-bubble-bg); color: #111; margin-right: auto; }
-    .bubble.user { background: #e8f0fe; color: #111; margin-left: auto; }
+  .bubble.user { background: var(--user-bubble-bg, #e8f0fe); color: #111; margin-left: auto; }
     .bubble .author { font-weight: 700; margin-bottom: 0.25rem; font-size: 0.95rem; }
     .bubble.bot .author { color: var(--bot-accent); }
-    .bubble.user .author { color: #065f46; }
+  .bubble.user .author { color: var(--user-author-color, #065f46); }
     .bubble .content p { margin: 0.25rem 0; }
   /* Avoid double-background inside bubbles: keep code blocks transparent with a subtle border */
   .bubble .content pre { background: transparent; border: 1px solid #e2e8f0; padding: 0.5rem; border-radius: 6px; }
@@ -90,6 +104,8 @@
     --log-border-dark: #1f2b48;
     --bot-bubble-bg: #e8efff;
     --bot-bubble-bg-dark: #1b2540;
+    --user-bubble-bg: #dcfce7;
+    --user-author-color: #047857;
   }
   body.provider-openai {
     --bot-accent: #dc2626;
@@ -101,12 +117,16 @@
     --bot-bubble-bg-dark: #2b1a1d;
   }
     .dark a { color: #8ab4f8; }
-    @media (max-width: 640px) {
+    @media (max-width: 768px) {
       body { margin: var(--space-1); }
       h2 { font-size: 1.1rem; }
       #log { padding: var(--space-1); }
-      #room-controls { grid-template-columns: 1fr 1fr; row-gap: 0.5rem; }
-      #controls { grid-template-columns: 1fr 1fr; row-gap: 0.5rem; }
+  .controls-toggle { align-items: center; gap: 0.4rem; }
+      .controls-wrapper { border: 1px solid var(--log-border); border-radius: 12px; padding: 0.75rem; background: rgba(255,255,255,0.95); box-shadow: 0 8px 24px rgba(15,23,42,0.15); }
+      .dark .controls-wrapper { border-color: var(--log-border-dark); background: rgba(15,17,21,0.95); }
+      .controls-wrapper.collapsed { display: none; }
+      #room-controls, #controls { flex-direction: column; align-items: stretch; }
+      #room-controls select, #controls select, #controls input { min-width: 100%; max-width: 100%; }
       #input-row { flex-direction: column; }
       #input-row .btns button { flex: 1 1 0; }
       input, button, textarea { font-size: 1rem; padding: 0.65rem; }
@@ -116,33 +136,37 @@
 </head>
 <body>
   <div class="container">
-  <h2 id="headerTitle">Web Chat</h2>
-  <div id="room-controls">
-    <label for="roomSelect">Room:</label>
-    <select id="roomSelect"></select>
-    <input id="roomPass" type="password" placeholder="Passcode (if required)">
-    <button id="joinRoomBtn" type="button">Join</button>
-    <button id="createRoomBtn" type="button">New Room</button>
+  <div class="top-bar">
+    <h2 id="headerTitle">Web Chat</h2>
+    <button id="controlsToggle" type="button" class="controls-toggle" aria-expanded="true">Hide Controls</button>
   </div>
-  <div id="controls">
-    <button id="themeToggle" type="button">Theme</button>
-    <label for="name">Name:</label>
-    <input id="name" placeholder="You">
-    <label for="provider">Provider:</label>
-    <select id="provider" style="min-width:9rem"></select>
-    <input id="token" type="password" placeholder="API token (if required)">
+  <div id="controlsWrapper" class="controls-wrapper">
+    <div id="room-controls">
+      <button id="createRoomBtn" type="button">New Room</button>
+      <label for="roomSelect">Room:</label>
+      <select id="roomSelect"></select>
+      <button id="deleteRoomBtn" type="button" class="danger-btn">Delete Room</button>
+    </div>
+    <div id="controls">
+      <button id="themeToggle" type="button">Theme</button>
+      <label for="name">Name:</label>
+      <input id="name" placeholder="You">
+      <label for="provider">Provider:</label>
+      <select id="provider"></select>
+      <input id="token" type="password" placeholder="API token (if required)">
+      <button id="resetBtn" type="button">Reset History</button>
+    </div>
   </div>
   <div id="log"></div>
   <div id="input-row">
     <textarea id="msg" placeholder="Type a message"></textarea>
     <div class="btns">
       <button id="sendBtn" type="button">Send</button>
-      <button id="resetBtn" type="button">Reset</button>
     </div>
   </div>
   <div id="status" class="ok">Ready for new Message.</div>
   </div>
   <button id="jumpBtn" type="button">Jump to latest</button>
-  <script src="/static/app.js?v=7"></script>
+  <script src="/static/app.js?v=9"></script>
 </body>
 </html>

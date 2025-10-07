@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi import FastAPI, Request, Response, HTTPException, Body
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -52,6 +52,10 @@ class RoomJoinIn(BaseModel):
 class RoomJoinOut(BaseModel):
     room: RoomSummary
     messages: list[dict]
+
+
+class RoomDeleteIn(BaseModel):
+    passcode: str | None = None
 
 
 def build_router_from_config(cfg: ConfigService) -> MessageRouter:
@@ -237,6 +241,34 @@ def create_app() -> FastAPI:
             room_store.set_provider(room_id, payload.provider)
         msgs = room_store.load_messages(room_id)
         return RoomJoinOut(room=_room_summary(meta), messages=msgs)
+
+    @app.delete("/rooms/{room_id}")
+    async def delete_room(room_id: str, payload: RoomDeleteIn | None = Body(None)):
+        meta = room_store.get_room(room_id)
+        if meta is None:
+            raise HTTPException(status_code=404, detail="Room not found")
+        passcode = payload.passcode if payload else None
+        if not room_store.validate_passcode(room_id, passcode):
+            raise HTTPException(status_code=403, detail="Invalid passcode")
+        try:
+            try:
+                router.memory.clear(room_id)
+            except Exception:
+                pass
+            try:
+                b = getattr(router, 'batcher', None)
+                if isinstance(b, ConversationBatcher):
+                    b.clear(room_id)
+            except Exception:
+                pass
+            room_store.delete_room(room_id)
+            log.info(f"room-delete {room_id}")
+            return {"ok": True}
+        except HTTPException:
+            raise
+        except Exception as e:
+            log.error(f"room-delete-error {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     @app.get("/web-config")
     async def web_config():

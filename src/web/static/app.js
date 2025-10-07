@@ -7,6 +7,7 @@
   var themeToggleEl = $('themeToggle');
   var providerEl = $('provider');
   var resetEl = $('resetBtn');
+  var deleteRoomBtn = $('deleteRoomBtn');
   var jumpEl = $('jumpBtn');
   var bot = 'Bot';
   var defaultUser = 'You';
@@ -17,9 +18,9 @@
   var tokenEl = $('token');
   var tokenRequired = false;
   var headerTitleEl = $('headerTitle');
+  var controlsToggleEl = $('controlsToggle');
+  var controlsWrapperEl = $('controlsWrapper');
   var roomSelectEl = $('roomSelect');
-  var roomPassEl = $('roomPass');
-  var joinRoomBtn = $('joinRoomBtn');
   var createRoomBtn = $('createRoomBtn');
   var LS_KEY = 'webchat.bearer_token';
   var LS_NAME = 'webchat.name';
@@ -38,6 +39,29 @@
   try { savedRoomId = localStorage.getItem(LS_ROOM_ID) || null; } catch(_) { savedRoomId = null; }
   function setStatus(t, cls){ if(statusEl){ statusEl.textContent = t || ''; statusEl.classList.remove('ok','busy'); if (cls) statusEl.classList.add(cls); } }
   function scroll(){ if (logEl) { logEl.scrollTop = logEl.scrollHeight; } }
+  var mobileQuery = window.matchMedia ? window.matchMedia('(max-width: 768px)') : { matches: false, addListener: function(){}, addEventListener: function(){} };
+  var controlsCollapsed = mobileQuery.matches;
+  function getProviderDisplayName(val){
+    if (!val) return 'Auto';
+    var normalized = val.toLowerCase();
+    if (normalized === 'openrouter') return 'OpenRouter';
+    if (normalized === 'openai') return 'OpenAI';
+    return val;
+  }
+  function updateControlsToggleLabel(){
+    if (!controlsToggleEl) return;
+    controlsToggleEl.textContent = controlsCollapsed ? 'Show Controls' : 'Hide Controls';
+  }
+  function applyControlsCollapsedState(){
+    if (!controlsWrapperEl) return;
+    controlsWrapperEl.classList.toggle('collapsed', controlsCollapsed);
+    if (controlsToggleEl) controlsToggleEl.setAttribute('aria-expanded', controlsCollapsed ? 'false' : 'true');
+    updateControlsToggleLabel();
+  }
+  function handleMediaChange(e){
+    controlsCollapsed = !!(e && e.matches);
+    applyControlsCollapsedState();
+  }
   function buildHeaders(includeJson){
     var headers = {};
     if (includeJson) headers['Content-Type'] = 'application/json';
@@ -92,10 +116,15 @@
   }
   function updateHeader(){
     if (!headerTitleEl) return;
-    var text = 'Web Chat';
-    if (bot) text += ' — ' + bot;
-    if (currentRoomName) text += ' — ' + currentRoomName;
-    headerTitleEl.textContent = text;
+    var parts = ['Web Chat'];
+    if (bot) parts.push(bot);
+    var roomLabel = currentRoomName ? currentRoomName : 'None';
+    parts.push('Room: ' + roomLabel);
+    var providerVal = '';
+    try { if (providerEl && providerEl.value) providerVal = providerEl.value.trim(); } catch(_) {}
+    if (!providerVal && currentProviderTheme) providerVal = currentProviderTheme;
+    parts.push('Provider: ' + getProviderDisplayName(providerVal));
+    headerTitleEl.textContent = parts.join(' — ');
   }
   function applyProviderTheme(provider){
     var body = document.body;
@@ -244,21 +273,20 @@
   function setCurrentRoom(roomId, roomName, passcode, provider){
     currentRoom = roomId || null;
     currentRoomName = roomName || '';
-    var cached = getStoredPass(roomId);
+    if (roomId) {
+      try { localStorage.setItem(LS_ROOM_ID, roomId); } catch(_) {}
+    } else {
+      try { localStorage.removeItem(LS_ROOM_ID); } catch(_) {}
+    }
+    savedRoomId = roomId || null;
     if (typeof passcode === 'string') {
       currentPasscode = passcode || null;
       if (roomId) storePass(roomId, passcode);
     } else {
-      currentPasscode = cached || null;
+      currentPasscode = getStoredPass(roomId) || null;
     }
-    if (roomId) {
-      try { localStorage.setItem(LS_ROOM_ID, roomId); } catch(_) {}
-    }
-    if (roomSelectEl && roomId) {
-      roomSelectEl.value = roomId;
-    }
-    if (roomPassEl) {
-      roomPassEl.value = currentPasscode || '';
+    if (roomSelectEl) {
+      roomSelectEl.value = roomId || '';
     }
     if (roomId && roomsById[roomId]) {
       roomsById[roomId].provider = provider || roomsById[roomId].provider || null;
@@ -314,6 +342,7 @@
         if (!rooms.length) {
           showEmptyState('No rooms found. Create one to get started.');
         }
+        updateHeader();
         return rooms;
       })
       .catch(function(err){
@@ -322,19 +351,131 @@
         return [];
       });
   }
-  function joinRoom(roomId, passcode){
+  function revertRoomSelection(){
+    if (!roomSelectEl) return;
+    if (currentRoom) roomSelectEl.value = currentRoom;
+    else roomSelectEl.value = '';
+  }
+  function promptForPasscode(meta, message){
+    if (!meta) return null;
+    var existing = getStoredPass(meta.room_id) || '';
+    var promptText = message || ('Enter passcode for "' + (meta.name || meta.room_id) + '":');
+    var result = window.prompt(promptText, existing);
+    if (result === null) return null;
+    return result.trim();
+  }
+  function attemptRoomSwitch(roomId){
+    var meta = roomsById[roomId];
+    if (!meta) {
+      showEmptyState('Room not found.');
+      revertRoomSelection();
+      return;
+    }
+    var pass = getStoredPass(roomId) || '';
+    if (meta.locked && !pass) {
+      var entered = promptForPasscode(meta);
+      if (entered === null) {
+        revertRoomSelection();
+        return;
+      }
+      pass = entered;
+    }
+    joinRoomWithRetries(roomId, pass, meta, { allowProviderOverride: false });
+  }
+  function joinRoomWithRetries(roomId, passcode, meta, opts){
+    joinRoom(roomId, passcode, opts).catch(function(err){
+      setStatus('Ready for new Message.', 'ok');
+      var status = err && err.status ? err.status : 0;
+      if (status === 403 && meta && meta.locked) {
+        var retry = promptForPasscode(meta, 'Incorrect passcode for "' + (meta.name || meta.room_id) + '". Try again:');
+        if (retry === null) {
+          revertRoomSelection();
+          return;
+        }
+        joinRoomWithRetries(roomId, retry, meta, opts);
+        return;
+      }
+      revertRoomSelection();
+      showEmptyState('Unable to join room: ' + (err && err.message ? err.message : String(err)));
+    });
+  }
+  function deleteRoomFlow(){
+    if (!roomSelectEl) return;
+    var rid = roomSelectEl.value || '';
+    if (!rid) {
+      appendRawHtml(bubble('System', mdToHtml('Select a room before deleting.'), 'bot'));
+      return;
+    }
+    var meta = roomsById[rid];
+    if (!meta) {
+      appendRawHtml(bubble('System', mdToHtml('Room not found.'), 'bot'));
+      return;
+    }
+    var label = meta.name || rid;
+    if (!window.confirm('Delete room "' + label + '"? This will remove all stored history.')) return;
+    var pass = getStoredPass(rid) || '';
+    if (meta.locked && !pass) {
+      var entered = promptForPasscode(meta, 'Enter the passcode to delete "' + label + '":');
+      if (entered === null) return;
+      pass = entered;
+    }
+    if (meta.locked) {
+      if (pass) storePass(rid, pass);
+      else storePass(rid, null);
+    }
+    setStatus('Deleting room…', 'busy');
+    fetch('/rooms/' + encodeURIComponent(rid), {
+      method: 'DELETE',
+      headers: buildHeaders(true),
+      body: JSON.stringify({ passcode: pass || null })
+    }).then(function(res){
+      if (!res.ok) {
+        return res.text().then(function(text){
+          var message = text;
+          try {
+            var data = JSON.parse(text);
+            message = data && (data.detail || data.error) || message;
+          } catch(_) {}
+          var error = new Error(message || ('Error ' + res.status));
+          error.status = res.status;
+          throw error;
+        });
+      }
+      return res.json();
+    }).then(function(){
+      storePass(rid, null);
+      if (currentRoom && currentRoom === rid) {
+        setCurrentRoom(null, '', null, null);
+        showEmptyState('Room deleted. Select another room to continue.');
+      }
+      delete roomsById[rid];
+      return refreshRooms().then(function(){
+        setStatus('Room deleted.', 'ok');
+      });
+    }).catch(function(err){
+      if (err && err.status === 403) storePass(rid, null);
+      var msg = err && err.message ? err.message : String(err);
+      appendRawHtml(bubble('Error', mdToHtml('Delete failed: ' + msg), 'bot'));
+      setStatus('Ready for new Message.', 'ok');
+    });
+  }
+  function joinRoom(roomId, passcode, options){
     if (!roomId) {
       showEmptyState('Select a room from the list or create a new one.');
       return Promise.reject(new Error('No room selected'));
     }
+    options = options || {};
+    var allowProviderOverride = options.allowProviderOverride !== false;
     var providerValue = '';
-    if (providerEl && providerEl.value) providerValue = providerEl.value.trim();
+    if (allowProviderOverride && providerEl && providerEl.value) providerValue = providerEl.value.trim();
     if (!providerValue && roomsById[roomId] && roomsById[roomId].provider) {
       providerValue = roomsById[roomId].provider;
-      ensureProviderOption(providerValue);
-      if (providerEl) providerEl.value = providerValue;
+      if (allowProviderOverride) {
+        ensureProviderOption(providerValue);
+        if (providerEl) providerEl.value = providerValue;
+      }
     }
-    if (providerValue) {
+    if (allowProviderOverride && providerValue) {
       applyProviderTheme(providerValue);
     }
     var payload = { passcode: passcode || '' };
@@ -357,7 +498,6 @@
       return resp;
     }).catch(function(err){
       setStatus('Ready for new Message.', 'ok');
-      showEmptyState('Unable to join room: ' + (err.message || String(err)));
       throw err;
     });
   }
@@ -411,14 +551,14 @@
       return;
     }
     var user = getUser();
-  setStatus('Message sent, awaiting response.', 'busy');
-  var headers = buildHeaders(true);
+    setStatus('Message sent, awaiting response.', 'busy');
+    var headers = buildHeaders(true);
     // Render the user bubble immediately
     appendRawHtml(bubble(user, mdToHtml(content), 'user'));
-  var provider = null; try { if (providerEl && providerEl.value) provider = providerEl.value; } catch(_) {}
-  var passcode = currentPasscode || getStoredPass(currentRoom) || '';
-  currentPasscode = passcode || null;
-  fetch('/chat', { method: 'POST', headers: headers, body: JSON.stringify({
+    var provider = null; try { if (providerEl && providerEl.value) provider = providerEl.value; } catch(_) {}
+    var passcode = currentPasscode || getStoredPass(currentRoom) || '';
+    currentPasscode = passcode || null;
+    fetch('/chat', { method: 'POST', headers: headers, body: JSON.stringify({
         content: content,
         user_name: user,
         user_id: user.toLowerCase(),
@@ -436,7 +576,7 @@
     msgEl.style.height = Math.min(msgEl.scrollHeight, 160) + 'px';
   }
   function bind(){
-  if (btnEl) btnEl.addEventListener('click', send);
+    if (btnEl) btnEl.addEventListener('click', send);
     if (msgEl) {
       msgEl.addEventListener('keydown', function(e){
         if (e.key === 'Enter') {
@@ -477,6 +617,7 @@
       if (currentRoom && roomsById[currentRoom]) {
         roomsById[currentRoom].provider = val || null;
       }
+      updateHeader();
     });
     if (resetEl) resetEl.addEventListener('click', function(){
       if (!currentRoom){
@@ -504,28 +645,22 @@
     if (roomSelectEl) {
       roomSelectEl.addEventListener('change', function(){
         var rid = roomSelectEl.value || '';
-        var cached = getStoredPass(rid);
-        if (roomPassEl) roomPassEl.value = cached || '';
-      });
-    }
-    if (roomPassEl) {
-      roomPassEl.addEventListener('change', function(){
-        var rid = roomSelectEl ? roomSelectEl.value : null;
-        var val = roomPassEl.value || '';
-        if (rid) storePass(rid, val);
-        if (rid && rid === currentRoom) currentPasscode = val || null;
-      });
-    }
-    if (joinRoomBtn) {
-      joinRoomBtn.addEventListener('click', function(){
-        var rid = roomSelectEl ? roomSelectEl.value : '';
-        var pass = roomPassEl ? roomPassEl.value : '';
         if (!rid) {
-          appendRawHtml(bubble('System', mdToHtml('Please select a room.'), 'bot'));
+          revertRoomSelection();
           return;
         }
-        joinRoom(rid, pass);
+        if (rid === currentRoom) return;
+        attemptRoomSwitch(rid);
       });
+    }
+    if (controlsToggleEl) {
+      controlsToggleEl.addEventListener('click', function(){
+        controlsCollapsed = !controlsCollapsed;
+        applyControlsCollapsedState();
+      });
+    }
+    if (deleteRoomBtn) {
+      deleteRoomBtn.addEventListener('click', deleteRoomFlow);
     }
     if (createRoomBtn) {
       createRoomBtn.addEventListener('click', function(){
@@ -537,10 +672,15 @@
     if (!logEl || !msgEl) { console.log('[ui-error] elements missing'); return; }
     setStatus('Ready for new Message.', 'ok');
     loadPassCache();
+    controlsCollapsed = mobileQuery.matches;
+    applyControlsCollapsedState();
+    if (mobileQuery.addEventListener) mobileQuery.addEventListener('change', handleMediaChange);
+    else if (mobileQuery.addListener) mobileQuery.addListener(handleMediaChange);
+    updateHeader();
   showEmptyState('Create or join a room to start chatting.');
     bind();
     fetch('/web-config').then(function(r){ return r.json(); }).then(function(j){
-      if (j && j.bot_name) { bot = j.bot_name; if (headerTitleEl) headerTitleEl.textContent = 'Web Chat — ' + bot; }
+      if (j && j.bot_name) { bot = j.bot_name; updateHeader(); }
       if (j && j.default_user_name) { defaultUser = j.default_user_name; if (nameEl && !nameEl.value) nameEl.value = defaultUser; }
       // Provider select
       try {
@@ -563,7 +703,8 @@
           }
         }
         var activeProvider = (providerEl && providerEl.value) ? providerEl.value : defaultProvider;
-        applyProviderTheme(activeProvider);
+    applyProviderTheme(activeProvider);
+    updateHeader();
       } catch(_) {}
       try { var saved = localStorage.getItem(LS_KEY); if (saved && tokenEl && !tokenEl.value) tokenEl.value = saved; } catch(_) {}
     }).catch(function(){});
@@ -598,10 +739,9 @@
           if (providerEl) providerEl.value = autoProvider;
           applyProviderTheme(autoProvider);
         }
-        if (roomPassEl) roomPassEl.value = pass;
-        joinRoom(target, pass).catch(function(){ /* ignore auto-join failure */ });
+    joinRoom(target, pass, { allowProviderOverride: false }).catch(function(){ /* ignore auto-join failure */ });
       } else {
-        showEmptyState('Select a room and enter its passcode to join.');
+        showEmptyState('Select a room to join.');
       }
     });
     console.log('[ui-bound]');

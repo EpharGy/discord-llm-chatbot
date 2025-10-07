@@ -11,6 +11,11 @@ Status (2025‑10‑07): the old single "web-room" flow is replaced with passcod
 - ✅ Passcode validation on join/chat/reset; passcodes cached locally per browser.
 - ✅ Transcript persistence per room (JSONL) and replay on reload.
 - ✅ Empty-state guidance when no room is joined, plus per-room reset hook.
+- ✅ Provider preference per room persisted server-side and re-applied on join/chat.
+- ✅ Provider-aware theming (OpenRouter blue vs OpenAI red) driven from the dropdown selection.
+- ✅ Compact header controls: mobile-collapsible overlay, smaller inputs, and passcode prompt workflow.
+- ✅ Delete room action (backend endpoint + UI button with confirmation and transcript purge).
+- ✅ OpenRouter light-mode user bubble contrast fix.
 
 ### Immediate follow-ups
 
@@ -18,15 +23,14 @@ Status (2025‑10‑07): the old single "web-room" flow is replaced with passcod
   - [ ] Configurable history retention per room (currently hard-coded 200 msgs via deque/JSONL).
   - [ ] Background cleanup for inactive rooms (e.g., purge after N days).
 - [ ] Room management UX
-  - [ ] Delete room (backend endpoint + UI button, with confirmation & transcript purge).
   - [ ] Rename room / change passcode workflow.
   - [ ] Surface last-active timestamp + sort order in the selector (currently sorted server-side, but UI doesn’t display it).
 - [ ] Multi-user experience
   - [ ] Decide on real-time sync (polling vs SSE/WebSocket) so two browsers see updates instantly.
   - [ ] Clarify access model when multiple users share a passcode (do we need per-user labels/state?).
-- [ ] Room-aware reset/analytics
+- [ ] Room-aware reset/analytics & bootstrapping
+  - [ ] Expose room metadata (provider, last_active) directly in `/rooms` + `/web-config` for faster client hydration.
   - [ ] Show a toast/banner after reset instead of replacing transcript silently.
-  - [ ] Expose room metadata in `/web-config` for future client bootstrapping.
 
 ### Longer-term polish / decisions
 
