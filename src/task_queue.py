@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Deque, Dict, List
+
+from .utils.time_utils import now_local
 
 
 @dataclass
@@ -11,7 +13,7 @@ class PendingMention:
     channel_id: str
     message_id: int
     style: str = "reply"
-    enqueued_at: datetime = datetime.now(timezone.utc)
+    enqueued_at: datetime = field(default_factory=now_local)
 
 
 class MentionsQueue:

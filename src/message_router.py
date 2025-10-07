@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta as _timedelta
+from datetime import datetime, timedelta as _timedelta
 from pathlib import Path
 from datetime import datetime as dt
 import io
@@ -10,6 +10,7 @@ import discord
 from .utils.correlation import make_correlation_id
 from .utils.logfmt import fmt
 import re
+from .utils.time_utils import ensure_local, format_local, now_local
 
 
 @dataclass
@@ -243,7 +244,7 @@ class MessageRouter:
             "content": message.content or "",
             "mentions": [m.id for m in message.mentions],
             "is_bot": bool(getattr(message.author, "bot", False)),
-            "created_at": message.created_at.replace(tzinfo=timezone.utc),
+            "created_at": ensure_local(message.created_at),
             "author_name": message.author.display_name,
             "guild_name": guild_name,
         }
@@ -397,7 +398,17 @@ class MessageRouter:
             role = "assistant" if it.get("is_bot") else "user"
             author = it.get("author_name") or ("bot" if it.get("is_bot") else "user")
             content = it.get("content", "")
-            timestamp_iso = it.get("created_at").isoformat() if it.get("created_at") else None
+            raw_created = it.get("created_at")
+            if isinstance(raw_created, datetime):
+                created_local = ensure_local(raw_created)
+            elif isinstance(raw_created, str):
+                try:
+                    created_local = ensure_local(datetime.fromisoformat(raw_created.replace("Z", "+00:00")))
+                except Exception:
+                    created_local = None
+            else:
+                created_local = None
+            timestamp_iso = format_local(created_local) if created_local else None
             structured_msgs.append({"role": role, "author": author, "content": content, "timestamp_iso": timestamp_iso})
         # Re-cluster to prioritize the most recent conversation context
         try:
@@ -406,16 +417,14 @@ class MessageRouter:
             recency_min = int(cfg.recency_minutes())
             cluster_max = max(1, int(cfg.cluster_max_messages()))
             thread_max = max(0, int(cfg.thread_affinity_max()))
-            now_ts = event.get("created_at") or datetime.now(timezone.utc)
+            now_ts = ensure_local(event.get("created_at")) or now_local()
             cutoff = now_ts - _timedelta(minutes=recency_min)
             def _parse_iso(ts: str | None):
                 if not ts:
                     return None
                 try:
-                    t = dt.fromisoformat(ts)
-                    if t.tzinfo is None:
-                        t = t.replace(tzinfo=timezone.utc)
-                    return t
+                    normalized = ts.replace("Z", "+00:00")
+                    return ensure_local(dt.fromisoformat(normalized))
                 except Exception:
                     return None
             recent_structs = []
@@ -527,7 +536,7 @@ class MessageRouter:
 
         # Subtle current local time hint (no location/zone), to help with time-related questions
         try:
-            messages_for_est.append({"role": "system", "content": f"Current Date/Time: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %z')}"})
+            messages_for_est.append({"role": "system", "content": f"Current Date/Time: {now_local().strftime('%Y-%m-%d %H:%M %z')}"})
         except Exception:
             pass
 
@@ -690,7 +699,7 @@ class MessageRouter:
                 for idx, model_name in enumerate(models_to_try):
                     if not model_name:
                         continue
-                    start_ts = datetime.now(timezone.utc)
+                    start_ts = now_local()
                     line = (
                         f"[llm-start] "
                         f"{fmt('channel', event.get('channel_name', event['channel_id']))} "
@@ -735,7 +744,7 @@ class MessageRouter:
                         from .config_service import ConfigService
                         cfg = ConfigService("config.yaml")
                         if bool(cfg.log_prompts()):
-                            ts_dir = dt.now().strftime("prompts-%Y%m%d-%H%M%S")
+                            ts_dir = now_local().strftime("prompts-%Y%m%d-%H%M%S")
                             out_dir = Path("logs") / ts_dir
                             out_dir.mkdir(parents=True, exist_ok=True)
                             import json
@@ -782,7 +791,7 @@ class MessageRouter:
                             )
                     except Exception:
                         pass
-                    dur_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
+                    dur_ms = int((now_local() - start_ts).total_seconds() * 1000)
                     usage = (result or {}).get("usage") if isinstance(result, dict) else None
                     # Normalize model label when using OpenAI-compatible backend
                     model_label = 'openai-compat' if (provider_used == 'openai') else model_name
@@ -854,7 +863,7 @@ class MessageRouter:
                         f"{fmt('user', event.get('author_name'))} "
                         f"{fmt('correlation', correlation_id)}"
                     )
-                    start_ts = datetime.now(timezone.utc)
+                    start_ts = now_local()
                     # Compute NSFW flag safely for auto-fallback
                     try:
                         _nsfw_auto = False
@@ -907,7 +916,7 @@ class MessageRouter:
                             )
                     except Exception:
                         pass
-                    dur_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
+                    dur_ms = int((now_local() - start_ts).total_seconds() * 1000)
                     usage = (result or {}).get("usage") if isinstance(result, dict) else None
                     if usage and (usage.get("input_tokens") is not None or usage.get("output_tokens") is not None):
                         self.log.info(
@@ -1037,7 +1046,7 @@ class MessageRouter:
             "author_id": str(getattr(getattr(sent, 'author', None), 'id', '0')) if sent else '0',
             "content": reply,
             "is_bot": True,
-            "created_at": (sent.created_at.replace(tzinfo=timezone.utc) if (sent and getattr(sent, 'created_at', None)) else datetime.now(timezone.utc)),
+            "created_at": (ensure_local(sent.created_at) if (sent and getattr(sent, 'created_at', None)) else now_local()),
             "author_name": (getattr(getattr(sent, 'author', None), 'display_name', 'bot') if sent else 'bot'),
         })
 
@@ -1137,7 +1146,7 @@ class MessageRouter:
                 pass
         # Time hint
         try:
-            system_blocks.append({'role': 'system', 'content': f"Current Date/Time: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %z')}"})
+            system_blocks.append({'role': 'system', 'content': f"Current Date/Time: {now_local().strftime('%Y-%m-%d %H:%M %z')}"})
         except Exception:
             pass
         # Template context
@@ -1237,7 +1246,7 @@ class MessageRouter:
                 if not model_name:
                     continue
                 try:
-                    start_ts = datetime.now(timezone.utc)
+                    start_ts = now_local()
                     # Demote router-level start; provider selector logs authoritative start with provider
                     self.log.debug(f"[llm-start] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('nsfw', _nsfw_batch)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
                     cf_send = dict(base_cf)
@@ -1258,7 +1267,7 @@ class MessageRouter:
                         from .config_service import ConfigService
                         cfg = ConfigService('config.yaml')
                         if bool(cfg.log_prompts()):
-                            ts_dir = dt.now().strftime('prompts-%Y%m%d-%H%M%S')
+                            ts_dir = now_local().strftime('prompts-%Y%m%d-%H%M%S')
                             out_dir = Path('logs') / ts_dir
                             out_dir.mkdir(parents=True, exist_ok=True)
                             import json
@@ -1278,7 +1287,7 @@ class MessageRouter:
                     except Exception:
                         pass
                     usage = (result or {}).get('usage') if isinstance(result, dict) else None
-                    dur_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
+                    dur_ms = int((now_local() - start_ts).total_seconds() * 1000)
                     # Hide model when using openai-compatible backend
                     hide_model = (provider_used == 'openai')
                     if usage and (usage.get('input_tokens') is not None or usage.get('output_tokens') is not None):
@@ -1300,7 +1309,7 @@ class MessageRouter:
         if reply is None and allow_auto:
             try:
                 # Keep previously computed nsfw flag
-                start_ts = datetime.now(timezone.utc)
+                start_ts = now_local()
                 result = await self.llm.generate_chat(
                     messages,
                     max_tokens=self.model_cfg.get('max_tokens'),
@@ -1314,7 +1323,7 @@ class MessageRouter:
                 )
                 reply = result.get('text') if isinstance(result, dict) else result
                 provider_used = (result or {}).get('provider') if isinstance(result, dict) else None
-                dur_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
+                dur_ms = int((now_local() - start_ts).total_seconds() * 1000)
                 self.log.info(f"[llm-finish] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model','openrouter/auto')} {fmt('provider', provider_used or 'openrouter')} {fmt('duration_ms', dur_ms)} {fmt('nsfw', _nsfw_batch)} {fmt('correlation', correlation_id)}")
             except Exception as e2:
                 self.log.error(f"LLM auto fallback error: {e2}")

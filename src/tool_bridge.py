@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from pathlib import Path
 import json
+from .utils.time_utils import now_local
 
 
 class ToolBridge:
@@ -84,7 +84,7 @@ class ToolBridge:
         max_tokens = cfg.get("max_tokens")
         temp = temperature if temperature is not None else self.router.model_cfg.get("temperature")
 
-        correlation_id = f"{channel_id}-tool-{tool_name}-{int(datetime.now(timezone.utc).timestamp()*1000)}"
+        correlation_id = f"{channel_id}-tool-{tool_name}-{int(now_local().timestamp()*1000)}"
         reply = None
         model_used = None
         for idx, model_name in enumerate(models_to_try):
@@ -130,7 +130,7 @@ class ToolBridge:
             from .config_service import ConfigService
             cfg = ConfigService('config.yaml')
             if bool(cfg.log_prompts()):
-                ts_dir = datetime.now().strftime('prompts-%Y%m%d-%H%M%S')
+                ts_dir = now_local().strftime('prompts-%Y%m%d-%H%M%S')
                 out_dir = Path('logs') / ts_dir
                 out_dir.mkdir(parents=True, exist_ok=True)
                 p = {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from fastapi import FastAPI, Request, Response, HTTPException, Body
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,6 +20,7 @@ from .llm.openai_compat_client import OpenAICompatClient
 from .llm.multi_backend_client import ContextualMultiBackendClient
 from .conversation_batcher import ConversationBatcher
 from .lore_service import LoreService
+from .utils.time_utils import ISO_FORMAT, ensure_local, format_local, now_local
 from .web_room_store import WebRoomStore
 
 
@@ -37,6 +39,8 @@ class RoomSummary(BaseModel):
     last_active: str
     locked: bool
     provider: str | None = None
+    message_count: int | None = None
+    owner: str | None = None
 
 
 class RoomCreateIn(BaseModel):
@@ -145,8 +149,79 @@ def create_app() -> FastAPI:
     log = get_logger("http_app")
     router = build_router_from_config(cfg)
     bearer = cfg.http_auth_bearer_token()
+    message_limit = cfg.http_message_limit()
+    inactive_days = cfg.http_inactive_room_days()
+    prune_interval_seconds = 24 * 60 * 60
     # Room store (persist web chat transcripts)
-    room_store = WebRoomStore(Path(__file__).resolve().parent / "web" / "data")
+    room_store = WebRoomStore(
+        Path(__file__).resolve().parent / "web" / "data",
+        message_limit=message_limit,
+        inactive_room_days=inactive_days,
+    )
+    hydrated_cache: dict[str, tuple[int, str | None]] = {}
+    prune_task: asyncio.Task | None = None
+
+    def _format_timestamp(dt: datetime) -> str:
+        return format_local(dt)
+
+    def _parse_timestamp(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            dt = datetime.strptime(value, ISO_FORMAT)
+        except ValueError:
+            try:
+                normalized = value.replace("Z", "+00:00")
+                dt = datetime.fromisoformat(normalized)
+            except Exception:
+                return None
+        return ensure_local(dt)
+
+    def _transcript_events(room_id: str, room_name: str, messages: list[dict]) -> list[dict]:
+        events: list[dict] = []
+        for msg in messages:
+            role = (msg.get("role") or "").lower()
+            is_bot = role == "assistant"
+            created_at = _parse_timestamp(msg.get("created_at"))
+            events.append(
+                {
+                    "channel_id": room_id,
+                    "channel_name": room_name,
+                    "author_id": msg.get("author_id") or ("bot" if is_bot else "web-user"),
+                    "author_name": msg.get("author_name") or ("Bot" if is_bot else "User"),
+                    "content": msg.get("content") or "",
+                    "is_bot": is_bot,
+                    "created_at": created_at,
+                    "message_id": msg.get("id"),
+                }
+            )
+        return events
+
+    def _hydrate_memory(meta, messages: list[dict] | None = None):
+        room_id = meta.room_id
+        room_name = meta.name
+        msgs = messages if messages is not None else room_store.load_messages(room_id, limit=message_limit)
+        if not msgs:
+            router.memory.clear(room_id)
+            hydrated_cache[room_id] = (0, None)
+            meta.message_count = 0
+            return
+        meta.message_count = len(msgs)
+        key = (len(msgs), msgs[-1].get("id"))
+        if hydrated_cache.get(room_id) == key:
+            return
+        events = _transcript_events(room_id, room_name, msgs)
+        router.memory.hydrate(room_id, events)
+        hydrated_cache[room_id] = key
+
+    def _perform_prune() -> None:
+        if inactive_days <= 0:
+            return
+        removed = room_store.prune_inactive(inactive_days)
+        if removed:
+            for rid in removed:
+                hydrated_cache.pop(rid, None)
+            log.info(f"room-prune removed={removed}")
 
     def _room_summary(meta) -> RoomSummary:
         return RoomSummary(
@@ -155,6 +230,8 @@ def create_app() -> FastAPI:
             last_active=meta.last_active,
             locked=meta.requires_passcode,
             provider=getattr(meta, "provider", None),
+            message_count=getattr(meta, "message_count", None),
+            owner=None,
         )
     # Derive a friendly bot label from participation.name_aliases (first alias, stripped of leading @)
     try:
@@ -170,6 +247,37 @@ def create_app() -> FastAPI:
         bot_label = "Bot"
 
     app = FastAPI(title="Discord LLM Bot — Web")
+
+    @app.on_event("startup")
+    async def _startup_prune():
+        nonlocal prune_task
+        try:
+            _perform_prune()
+        except Exception as exc:
+            log.error(f"room-prune-startup-error {exc}")
+        if inactive_days > 0:
+            async def _prune_loop():
+                try:
+                    while True:
+                        await asyncio.sleep(prune_interval_seconds)
+                        try:
+                            _perform_prune()
+                        except Exception as inner_exc:
+                            log.error(f"room-prune-loop-error {inner_exc}")
+                except asyncio.CancelledError:
+                    return
+            prune_task = asyncio.create_task(_prune_loop())
+
+    @app.on_event("shutdown")
+    async def _shutdown_prune():
+        nonlocal prune_task
+        if prune_task:
+            prune_task.cancel()
+            try:
+                await prune_task
+            except asyncio.CancelledError:
+                pass
+            prune_task = None
 
     @app.get("/health")
     async def health():
@@ -228,6 +336,7 @@ def create_app() -> FastAPI:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         log.info(f"room-create {meta.room_id}")
+        hydrated_cache[meta.room_id] = (0, None)
         return _room_summary(meta)
 
     @app.post("/rooms/{room_id}/join", response_model=RoomJoinOut)
@@ -240,6 +349,7 @@ def create_app() -> FastAPI:
         if payload.provider:
             room_store.set_provider(room_id, payload.provider)
         msgs = room_store.load_messages(room_id)
+        _hydrate_memory(meta, msgs)
         return RoomJoinOut(room=_room_summary(meta), messages=msgs)
 
     @app.delete("/rooms/{room_id}")
@@ -261,7 +371,8 @@ def create_app() -> FastAPI:
                     b.clear(room_id)
             except Exception:
                 pass
-            room_store.delete_room(room_id)
+                room_store.delete_room(room_id)
+                hydrated_cache.pop(room_id, None)
             log.info(f"room-delete {room_id}")
             return {"ok": True}
         except HTTPException:
@@ -273,14 +384,21 @@ def create_app() -> FastAPI:
     @app.get("/web-config")
     async def web_config():
         provs = _available_providers_from_router()
+        rooms = [_room_summary(meta).model_dump() for meta in sorted(room_store.list_rooms(), key=lambda m: m.last_active, reverse=True)]
         # Prefer openrouter as default if available, unless user persisted choice on client
         default_provider = 'openrouter' if 'openrouter' in provs else ('openai' if 'openai' in provs else None)
-        return {"bot_name": bot_label, "default_user_name": "You", "token_required": bool(bearer), "providers": provs, "default_provider": default_provider}
+        return {
+            "bot_name": bot_label,
+            "default_user_name": "You",
+            "token_required": bool(bearer),
+            "providers": provs,
+            "default_provider": default_provider,
+            "rooms": rooms,
+        }
 
     @app.post("/chat")
     async def chat(inp: ChatIn, request: Request):
         # Build a minimal event and use the batch reply path to bypass participation policy.
-        import datetime
         from types import SimpleNamespace
 
         # Auth if configured
@@ -299,9 +417,10 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=403, detail="Invalid passcode")
         if inp.provider:
             room_store.set_provider(ch_id, inp.provider)
+        _hydrate_memory(meta)
 
-        now = datetime.datetime.now(datetime.timezone.utc)
-        now_iso = now.isoformat()
+        now = now_local()
+        now_iso = _format_timestamp(now)
 
         # per-request correlation id
         mid = f"web-{int(now.timestamp()*1000)}"
@@ -326,6 +445,7 @@ def create_app() -> FastAPI:
             "correlation_id": correlation_id,
         }
 
+        last_id: str | None = None
         try:
             # Record user event for context
             router.memory.record(event)
@@ -340,6 +460,7 @@ def create_app() -> FastAPI:
                     "created_at": now_iso,
                 },
             )
+            last_id = mid
             # NSFW=true channel stub
             channel_obj = SimpleNamespace(id=ch_id, name="web-room", nsfw=True, parent=None)
             # Tag web context for provider selection
@@ -354,7 +475,7 @@ def create_app() -> FastAPI:
             reply = await router.build_batch_reply(cid=ch_id, events=[event], channel=channel_obj, allow_outside_window=True)
             reply = reply or ""
             if reply:
-                now_bot = datetime.datetime.now(datetime.timezone.utc)
+                now_bot = now_local()
                 router.memory.record({
                     "channel_id": ch_id,
                     "author_id": "bot",
@@ -371,12 +492,15 @@ def create_app() -> FastAPI:
                         "author_id": "bot",
                         "author_name": bot_label,
                         "content": reply,
-                        "created_at": now_bot.isoformat(),
+                        "created_at": _format_timestamp(now_bot),
                     },
                 )
+                last_id = f"{mid}-bot"
         except Exception as e:
             log.error(f"web-chat-error {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
+        meta.message_count = room_store.message_count(ch_id)
+        hydrated_cache[ch_id] = (meta.message_count or 0, last_id)
         return {"reply": reply}
 
     @app.post("/reset")
@@ -408,6 +532,8 @@ def create_app() -> FastAPI:
                 room_store.clear_room(ch_id)
             except Exception:
                 pass
+            meta.message_count = 0
+            hydrated_cache[ch_id] = (0, None)
             return {"ok": True}
         except HTTPException:
             raise

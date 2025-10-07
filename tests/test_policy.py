@@ -1,14 +1,15 @@
 import types
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from src.participation_policy import ParticipationPolicy
+from src.utils.time_utils import now_local
 
 class DummyMemory:
     def __init__(self):
         self._responses = []  # list[(channel_id, timestamp)]
         self._messages_since_last = {}
     def responses_in_window(self, cid, window_seconds):
-        now = datetime.now(timezone.utc)
+        now = now_local()
         self._responses = [(c,t) for (c,t) in self._responses if (now - t).total_seconds() <= window_seconds]
         return sum(1 for c,_ in self._responses if c == cid)
     def last_reply_info(self, cid):
@@ -19,7 +20,7 @@ class DummyMemory:
     def messages_since_last_reply(self, cid):
         return self._messages_since_last.get(cid, 0)
     def simulate_reply(self, cid):
-        self._responses.append((cid, datetime.now(timezone.utc)))
+        self._responses.append((cid, now_local()))
         self._messages_since_last[cid] = 0
     def add_message(self, cid):
         self._messages_since_last[cid] = self._messages_since_last.get(cid, 0) + 1

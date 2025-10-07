@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+
+from .utils.time_utils import ensure_local, now_local
 
 
 class ConversationMemory:
@@ -23,6 +25,47 @@ class ConversationMemory:
     def get_recent(self, channel_id: str, limit: int = 10):
         return list(self.store[channel_id])[-limit:]
 
+    def hydrate(self, channel_id: str, events: list[dict]):
+        dq = self.store[channel_id]
+        dq.clear()
+        responded = self.responded_to[channel_id]
+        responded.clear()
+        reply_q = self.replies_timestamps[channel_id]
+        reply_q.clear()
+        last_reply_dt = None
+        now = now_local()
+        cutoff = now - timedelta(seconds=60)
+        iterable = events[-dq.maxlen:] if dq.maxlen else events
+        for ev in iterable:
+            dq.append(ev)
+            raw_created = ev.get("created_at")
+            if isinstance(raw_created, datetime):
+                created_at = ensure_local(raw_created)
+            elif isinstance(raw_created, str):
+                try:
+                    created_at = ensure_local(datetime.fromisoformat(raw_created.replace("Z", "+00:00")))
+                except Exception:
+                    created_at = None
+            else:
+                created_at = None
+            if ev.get("is_bot"):
+                if isinstance(created_at, datetime):
+                    if last_reply_dt is None or created_at > last_reply_dt:
+                        last_reply_dt = created_at
+                    if created_at >= cutoff:
+                        reply_q.append(created_at)
+            else:
+                msg_id = ev.get("message_id") or ev.get("id")
+                if msg_id:
+                    responded.add(str(msg_id))
+        if last_reply_dt:
+            self.last_reply[channel_id] = last_reply_dt
+        else:
+            self.last_reply.pop(channel_id, None)
+        # drop timestamps outside window once more
+        while reply_q and reply_q[0] < cutoff:
+            reply_q.popleft()
+
     def get_recent_since(self, channel_id: str, cutoff_dt: datetime):
         return [e for e in self.store[channel_id] if e.get("created_at") and e["created_at"] >= cutoff_dt]
 
@@ -30,7 +73,7 @@ class ConversationMemory:
         return self.last_reply.get(channel_id)
 
     def on_replied(self, event: dict):
-        now = datetime.now(timezone.utc)
+        now = now_local()
         cid = event["channel_id"]
         self.last_reply[cid] = now
         q = self.replies_timestamps[cid]
@@ -55,7 +98,7 @@ class ConversationMemory:
         Use this when conversation-mode replies should not affect cooldown but
         must still count towards the anti-spam window.
         """
-        now = datetime.now(timezone.utc)
+        now = now_local()
         q = self.replies_timestamps[channel_id]
         q.append(now)
         one_min_ago = now - timedelta(seconds=60)
@@ -63,7 +106,7 @@ class ConversationMemory:
             q.popleft()
 
     def start_conversation_mode(self, channel_id: str, window_seconds: int, max_messages: int):
-        now = datetime.now(timezone.utc)
+        now = now_local()
         self.conv_until[channel_id] = now + timedelta(seconds=window_seconds)
         self.conv_budget[channel_id] = int(max_messages)
 
@@ -71,7 +114,7 @@ class ConversationMemory:
         until = self.conv_until.get(channel_id)
         if not until:
             return False
-        now = datetime.now(timezone.utc)
+        now = now_local()
         if now <= until and self.conv_budget.get(channel_id, 0) > 0:
             return True
         # Expire if past time or budget depleted
@@ -86,7 +129,7 @@ class ConversationMemory:
         return True
 
     def responses_in_window(self, channel_id: str, window_seconds: int) -> int:
-        now = datetime.now(timezone.utc)
+        now = now_local()
         cutoff = now - timedelta(seconds=window_seconds)
         q = self.replies_timestamps[channel_id]
         while q and q[0] < cutoff:

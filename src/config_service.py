@@ -449,6 +449,20 @@ class ConfigService:
         v = (self._cfg.raw.get("http") or {}).get("html_host")
         return str(v) if v else "127.0.0.1"
 
+    def http_message_limit(self) -> int:
+        self._maybe_reload()
+        try:
+            return int((self._cfg.raw.get("http") or {}).get("message_limit", 200))
+        except Exception:
+            return 200
+
+    def http_inactive_room_days(self) -> float:
+        self._maybe_reload()
+        try:
+            return float((self._cfg.raw.get("http") or {}).get("inactive_room_days", 1))
+        except Exception:
+            return 1.0
+
     def http_auth_bearer_token(self) -> str | None:
         """Optional bearer token for HTTP endpoints; when set, required on protected routes."""
         self._maybe_reload()

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 import random
 from .logger_factory import get_logger
 from .utils.logfmt import fmt
+from .utils.time_utils import ensure_local, now_local
 
 
 class ParticipationPolicy:
@@ -109,7 +110,7 @@ class ParticipationPolicy:
             pass
 
     def should_reply(self, event: dict, memory) -> dict:
-        now = datetime.now(timezone.utc)
+        now = now_local()
 
         # Bots: allow only if configured
         if event.get("is_bot"):
@@ -144,7 +145,9 @@ class ParticipationPolicy:
             self._log_decision(event, False, "mention-required")
             return {"allow": False, "reason": "mention-required"}
 
-        last_reply = memory.last_reply_info(event["channel_id"]) or datetime.fromtimestamp(0, tz=timezone.utc)
+        last_reply = memory.last_reply_info(event["channel_id"]) or ensure_local(datetime.fromtimestamp(0))
+        if last_reply is None:
+            last_reply = now
         seconds_since_last = (now - last_reply).total_seconds()
         messages_since_last = memory.messages_since_last_reply(event["channel_id"])  # per-channel count
 

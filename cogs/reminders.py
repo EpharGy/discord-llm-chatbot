@@ -5,7 +5,7 @@ import asyncio
 import json
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import logging
 
 try:
@@ -21,6 +21,38 @@ REMINDER_FILE = os.path.join(os.path.dirname(__file__), 'reminders.json')
 CHECK_INTERVAL = 30  # seconds
 
 TIME_PATTERN = re.compile(r'((?P<days>\d+)d)?((?P<hours>\d+)h)?((?P<minutes>\d+)m)?')
+
+ISO_FORMAT = "%Y-%m-%dT%H:%M:%S.%f%z"
+
+
+def now_local() -> datetime:
+    return datetime.now().astimezone()
+
+
+def ensure_local(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=now_local().tzinfo)
+    return dt.astimezone()
+
+
+def format_timestamp(dt: datetime) -> str:
+    local_dt = ensure_local(dt)
+    assert local_dt is not None
+    return local_dt.strftime(ISO_FORMAT)
+
+
+def parse_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.strptime(value, ISO_FORMAT)
+    except ValueError:
+        try:
+            normalized = value.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(normalized)
+        except Exception:
+            return None
+    return ensure_local(dt)
 
 def parse_time_string(time_str):
     match = TIME_PATTERN.fullmatch(time_str.strip().lower())
@@ -76,9 +108,10 @@ class RemindersCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.reminders = load_reminders()
-        # Migrate any legacy non-numeric IDs to the smallest available integers
-        migrated = self._normalize_ids()
-        if migrated:
+        # Migrate any legacy non-numeric IDs and timestamps to the preferred format
+        migrated_ids = self._normalize_ids()
+        migrated_ts = self._normalize_timestamps()
+        if migrated_ids or migrated_ts:
             save_reminders(self.reminders)
         self.check_reminders.start()
         # Inform once if persona ToolBridge isn't available
@@ -121,15 +154,28 @@ class RemindersCog(commands.Cog):
                 changed = True
         return changed
 
+    def _normalize_timestamps(self) -> bool:
+        changed = False
+        for r in self.reminders:
+            for key in ("created_at", "remind_at", "next_retry"):
+                val = r.get(key)
+                if not isinstance(val, str):
+                    continue
+                dt = parse_timestamp(val)
+                if dt is None:
+                    continue
+                formatted = format_timestamp(dt)
+                if formatted != val:
+                    r[key] = formatted
+                    changed = True
+        return changed
+
     async def cleanup_stale_reminders(self):
-        now = datetime.now(timezone.utc)
+        now = now_local()
         stale = []
         for r in self.reminders:
-            try:
-                ra = datetime.fromisoformat(r['remind_at'])
-                if ra.tzinfo is None:
-                    ra = ra.replace(tzinfo=timezone.utc)
-            except Exception:
+            ra = parse_timestamp(r.get('remind_at'))
+            if ra is None:
                 continue
             if ra < now:
                 stale.append(r)
@@ -141,24 +187,16 @@ class RemindersCog(commands.Cog):
 
     @tasks.loop(seconds=CHECK_INTERVAL)
     async def check_reminders(self):
-        now = datetime.now(timezone.utc)
+        now = now_local()
         updated_reminders = []
         for r in self.reminders:
-            try:
-                remind_at = datetime.fromisoformat(r['remind_at'])
-                if remind_at.tzinfo is None:
-                    remind_at = remind_at.replace(tzinfo=timezone.utc)
-            except Exception:
+            remind_at = parse_timestamp(r.get('remind_at'))
+            if remind_at is None:
                 updated_reminders.append(r)
                 continue
             failed_attempts = r.get('failed_attempts', 0)
             if r.get('next_retry'):
-                try:
-                    next_retry = datetime.fromisoformat(r['next_retry'])
-                    if next_retry.tzinfo is None:
-                        next_retry = next_retry.replace(tzinfo=timezone.utc)
-                except Exception:
-                    next_retry = remind_at
+                next_retry = parse_timestamp(r.get('next_retry')) or remind_at
             else:
                 next_retry = remind_at
             # If reminder is due and not yet delivered
@@ -173,7 +211,7 @@ class RemindersCog(commands.Cog):
                         failed_attempts += 1
                         if failed_attempts < 7:
                             r['failed_attempts'] = failed_attempts
-                            r['next_retry'] = (now + timedelta(minutes=10)).isoformat()
+                            r['next_retry'] = format_timestamp(now + timedelta(minutes=10))
                             updated_reminders.append(r)
                         # After 6 failed attempts, give up and remove
                 else:
@@ -193,12 +231,10 @@ class RemindersCog(commands.Cog):
             tool = ToolBridge(router)
             try:
                 # Local time presentation for when it was scheduled
-                try:
-                    ra = datetime.fromisoformat(reminder['remind_at'])
-                    if ra.tzinfo is None:
-                        ra = ra.replace(tzinfo=timezone.utc)
-                    scheduled_local = ra.astimezone().strftime('%Y-%m-%d %H:%M')
-                except Exception:
+                ra = parse_timestamp(reminder.get('remind_at'))
+                if ra is not None:
+                    scheduled_local = ensure_local(ra).strftime('%Y-%m-%d %H:%M')
+                else:
                     scheduled_local = reminder.get('remind_at', '')
                 details = f"scheduled_at_local={scheduled_local} delivered_late={'true' if offline else 'false'}"
                 is_nsfw = bool(getattr(getattr(channel, 'parent', None), 'nsfw', False)) or bool(getattr(channel, 'nsfw', False)) if channel else False
@@ -257,15 +293,16 @@ class RemindersCog(commands.Cog):
         if not delta:
             await interaction.followup.send("Invalid time format. Use e.g. 1d2h30m, 45m, 2h.", ephemeral=True)
             return
-        remind_at = datetime.now(timezone.utc) + delta
+        remind_at = now_local() + delta
+        created_at = now_local()
         reminder = {
             'id': self._next_available_id(),
             'user_id': interaction.user.id,
             'channel_id': interaction.channel.id if interaction.channel else None,
             'guild_id': interaction.guild.id if interaction.guild else None,
             'message': message,
-            'created_at': datetime.now(timezone.utc).isoformat(),
-            'remind_at': remind_at.isoformat()
+            'created_at': format_timestamp(created_at),
+            'remind_at': format_timestamp(remind_at)
         }
         self.reminders.append(reminder)
         save_reminders(self.reminders)
@@ -275,9 +312,9 @@ class RemindersCog(commands.Cog):
             tool = ToolBridge(router)
             human = humanize_timedelta(delta)
             try:
-                local_time = remind_at.astimezone().strftime('%Y-%m-%d %H:%M')
+                local_time = ensure_local(remind_at).strftime('%Y-%m-%d %H:%M')
             except Exception:
-                local_time = remind_at.isoformat()
+                local_time = reminder['remind_at']
             summary = f"Set a reminder for <@{interaction.user.id}> in {human}: {message}"
             details = f"remind_at_local={local_time}"
             try:
@@ -321,13 +358,11 @@ class RemindersCog(commands.Cog):
             return
         lines = []
         for r in user_reminders:
-            try:
-                at = datetime.fromisoformat(r['remind_at'])
-                if at.tzinfo is None:
-                    at = at.replace(tzinfo=timezone.utc)
-                at_local = at.astimezone().strftime('%Y-%m-%d %H:%M')
-            except Exception:
-                at_local = r['remind_at']
+            at = parse_timestamp(r.get('remind_at'))
+            if at is not None:
+                at_local = ensure_local(at).strftime('%Y-%m-%d %H:%M')
+            else:
+                at_local = r.get('remind_at', '')
             lines.append(f"ID: {r['id']} | At: {at_local} | Msg: {r['message']}")
         summary = "Your active reminders:"
         details = "\n".join(lines)

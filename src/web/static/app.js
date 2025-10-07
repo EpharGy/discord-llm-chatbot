@@ -7,6 +7,7 @@
   var themeToggleEl = $('themeToggle');
   var providerEl = $('provider');
   var resetEl = $('resetBtn');
+  var toastEl = $('toast');
   var deleteRoomBtn = $('deleteRoomBtn');
   var jumpEl = $('jumpBtn');
   var bot = 'Bot';
@@ -35,9 +36,27 @@
   var currentRoom = null;
   var currentRoomName = '';
   var currentPasscode = null;
+  var currentRoomMessageCount = null;
+  var currentRoomOwner = null;
+  var toastTimer = null;
   var savedRoomId = null;
   try { savedRoomId = localStorage.getItem(LS_ROOM_ID) || null; } catch(_) { savedRoomId = null; }
   function setStatus(t, cls){ if(statusEl){ statusEl.textContent = t || ''; statusEl.classList.remove('ok','busy'); if (cls) statusEl.classList.add(cls); } }
+  function showToast(message, variant){
+    if (!toastEl) return;
+    if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
+    toastEl.textContent = message || '';
+    toastEl.classList.remove('toast-ok','toast-error','show');
+    var cls = (variant === 'error') ? 'toast-error' : 'toast-ok';
+    toastEl.classList.add(cls);
+    // ensure reflow before adding show for retrigger
+    void toastEl.offsetWidth;
+    toastEl.classList.add('show');
+    toastTimer = setTimeout(function(){
+      toastEl.classList.remove('show','toast-ok','toast-error');
+      toastTimer = null;
+    }, 4000);
+  }
   function scroll(){ if (logEl) { logEl.scrollTop = logEl.scrollHeight; } }
   var mobileQuery = window.matchMedia ? window.matchMedia('(max-width: 768px)') : { matches: false, addListener: function(){}, addEventListener: function(){} };
   var controlsCollapsed = mobileQuery.matches;
@@ -111,7 +130,7 @@
   function storePass(roomId, passcode){
     if (!roomId) return;
     if (passcode) passCache[roomId] = passcode;
-    else if (passCache && passCache.hasOwnProperty(roomId)) delete passCache[roomId];
+    else if (passCache && Object.prototype.hasOwnProperty.call(passCache, roomId)) delete passCache[roomId];
     persistPassCache();
   }
   function updateHeader(){
@@ -158,12 +177,17 @@
     if (typeof locked === 'undefined') locked = meta['locked'];
     var provider = meta.provider || meta['provider'] || null;
     if (provider) provider = provider.toLowerCase();
+    var messageCount = meta.message_count;
+    if (typeof messageCount === 'undefined') messageCount = meta['message_count'];
+    var owner = meta.owner || meta['owner'] || null;
     return {
       room_id: rid,
       name: name,
       last_active: lastActive,
       locked: Boolean(locked),
-      provider: provider
+      provider: provider,
+      message_count: typeof messageCount === 'number' ? messageCount : null,
+      owner: owner
     };
   }
   function escapeHtml(s){ return s.replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]); }); }
@@ -271,8 +295,10 @@
     scroll();
   }
   function setCurrentRoom(roomId, roomName, passcode, provider){
-    currentRoom = roomId || null;
-    currentRoomName = roomName || '';
+  currentRoom = roomId || null;
+  currentRoomName = roomName || '';
+  currentRoomMessageCount = null;
+  currentRoomOwner = null;
     if (roomId) {
       try { localStorage.setItem(LS_ROOM_ID, roomId); } catch(_) {}
     } else {
@@ -289,7 +315,10 @@
       roomSelectEl.value = roomId || '';
     }
     if (roomId && roomsById[roomId]) {
-      roomsById[roomId].provider = provider || roomsById[roomId].provider || null;
+      var meta = roomsById[roomId];
+      meta.provider = provider || meta.provider || null;
+      currentRoomMessageCount = typeof meta.message_count === 'number' ? meta.message_count : null;
+      currentRoomOwner = meta.owner || null;
     }
     var providerValue = provider || (roomId && roomsById[roomId] ? roomsById[roomId].provider : null);
     if (providerValue) {
@@ -489,7 +518,7 @@
       setStatus('Ready for new Message.', 'ok');
       var meta = normalizeRoomMeta(resp && resp.room);
       if (!meta || !meta.room_id) throw new Error('Invalid join response');
-      roomsById[meta.room_id] = meta;
+  roomsById[meta.room_id] = meta;
       populateRoomSelect(Object.values(roomsById));
       if (typeof passcode === 'string' && passcode) storePass(meta.room_id, passcode);
       var storedPass = passcode || getStoredPass(meta.room_id);
@@ -621,7 +650,7 @@
     });
     if (resetEl) resetEl.addEventListener('click', function(){
       if (!currentRoom){
-        showEmptyState('Join a room before resetting history.');
+        showToast('Join a room before resetting history.', 'error');
         return;
       }
       if (!confirm('Clear the conversation history for this room?')) return;
@@ -632,8 +661,15 @@
         body: JSON.stringify({ room_id: currentRoom })
       })
         .then(function(res){ if (!res.ok) { return res.text().then(function(t){ throw new Error(t); }); } return res.json(); })
-        .then(function(){ showEmptyState('History cleared. Start a new conversation!'); setStatus('Ready for new Message.'); })
-        .catch(function(e){ append('Error: ' + e + '\n'); setStatus('Ready for new Message.'); });
+        .then(function(){
+          showEmptyState('History cleared. Start a new conversation!');
+          showToast('History reset for this room.', 'ok');
+          setStatus('Ready for new Message.');
+        })
+        .catch(function(e){
+          showToast('Reset failed: ' + (e && e.message ? e.message : String(e)), 'error');
+          setStatus('Ready for new Message.');
+        });
     });
     if (jumpEl && logEl) {
       jumpEl.addEventListener('click', function(){ scroll(); });
@@ -705,6 +741,11 @@
         var activeProvider = (providerEl && providerEl.value) ? providerEl.value : defaultProvider;
     applyProviderTheme(activeProvider);
     updateHeader();
+      } catch(_) {}
+      try {
+        if (j && Array.isArray(j.rooms) && j.rooms.length) {
+          populateRoomSelect(j.rooms);
+        }
       } catch(_) {}
       try { var saved = localStorage.getItem(LS_KEY); if (saved && tokenEl && !tokenEl.value) tokenEl.value = saved; } catch(_) {}
     }).catch(function(){});

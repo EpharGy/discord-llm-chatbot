@@ -16,21 +16,20 @@ Status (2025‑10‑07): the old single "web-room" flow is replaced with passcod
 - ✅ Compact header controls: mobile-collapsible overlay, smaller inputs, and passcode prompt workflow.
 - ✅ Delete room action (backend endpoint + UI button with confirmation and transcript purge).
 - ✅ OpenRouter light-mode user bubble contrast fix.
+- ✅ Room metadata surfaced via `/rooms` and `/web-config` (provider, last active, counts).
+- ✅ Reset history toast banner instead of silent transcript replacement.
+- ✅ Room history rehydrated into conversation memory for consistent context after reloads.
+- ✅ Configurable web room retention (message cap + inactive-room pruning).
 
 ### Immediate follow-ups
 
 - [ ] Room lifecycle guardrails
-  - [ ] Configurable history retention per room (currently hard-coded 200 msgs via deque/JSONL).
-  - [ ] Background cleanup for inactive rooms (e.g., purge after N days).
+  - [ ] Consider per-room overrides for retention/pruning (currently global config).
 - [ ] Room management UX
   - [ ] Rename room / change passcode workflow.
-  - [ ] Surface last-active timestamp + sort order in the selector (currently sorted server-side, but UI doesn’t display it).
 - [ ] Multi-user experience
   - [ ] Decide on real-time sync (polling vs SSE/WebSocket) so two browsers see updates instantly.
   - [ ] Clarify access model when multiple users share a passcode (do we need per-user labels/state?).
-- [ ] Room-aware reset/analytics & bootstrapping
-  - [ ] Expose room metadata (provider, last_active) directly in `/rooms` + `/web-config` for faster client hydration.
-  - [ ] Show a toast/banner after reset instead of replacing transcript silently.
 
 ### Longer-term polish / decisions
 

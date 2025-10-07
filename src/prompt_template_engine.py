@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from jinja2 import Environment, BaseLoader
 from pathlib import Path
 from .persona_service import PersonaService
+from .utils.time_utils import ensure_local, format_local, now_local
 
 
 class PromptTemplateEngine:
@@ -106,8 +108,7 @@ class PromptTemplateEngine:
 
     def render(self, conversation_window, user_input: str, summary: str | None = None) -> str:
         # Build a context block with buckets: last user message, recent (<= recency window), older (> window)
-        from datetime import datetime, timedelta, timezone
-        now = datetime.now(timezone.utc)
+        now = now_local()
         try:
             from .config_service import ConfigService
             cfg = ConfigService("config.yaml")
@@ -122,14 +123,14 @@ class PromptTemplateEngine:
                 last_user = m
                 break
         if not last_user:
-            last_user = {"timestamp_iso": now.isoformat(), "author": "user", "content": user_input, "role": "user"}
+            last_user = {"timestamp_iso": format_local(now), "author": "user", "content": user_input, "role": "user"}
 
         recent_messages = []
         older_messages = []
         for m in conversation_window:
             ts = m.get("timestamp_iso")
             try:
-                dt = datetime.fromisoformat(ts) if ts else None
+                dt = ensure_local(datetime.fromisoformat(ts.replace("Z", "+00:00"))) if ts else None
             except Exception:
                 dt = None
             (recent_messages if (dt and dt >= cutoff) else older_messages).append(m)

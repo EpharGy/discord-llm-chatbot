@@ -34,6 +34,27 @@
   .danger-btn:hover { background: #fee2e2; }
   .dark .danger-btn { background: #3f1a1c; color: #fca5a5; border-color: #7f1d1d; }
   .dark .danger-btn:hover { background: #4a1c20; }
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 1.5rem;
+    transform: translateX(-50%);
+    padding: 0.85rem 1.4rem;
+    border-radius: 999px;
+    background: rgba(24, 121, 78, 0.95);
+    color: #fff;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.25);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+    z-index: 999;
+    font-weight: 600;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; visibility: visible; }
+  .toast.toast-ok { background: rgba(24, 121, 78, 0.95); }
+  .toast.toast-error { background: rgba(185, 28, 28, 0.95); }
+  .dark .toast { box-shadow: 0 10px 32px rgba(8, 12, 20, 0.55); }
   #room-controls label, #controls label { font-weight: 600; font-size: 0.95rem; }
   #room-controls select { min-width: 10rem; max-width: 14rem; }
   #controls select, #controls input { min-width: 8rem; max-width: 12rem; }
@@ -167,6 +188,7 @@
   <div id="status" class="ok">Ready for new Message.</div>
   </div>
   <button id="jumpBtn" type="button">Jump to latest</button>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/app.js?v=9"></script>
 </body>
 </html>
