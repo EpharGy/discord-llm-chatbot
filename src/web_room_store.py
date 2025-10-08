@@ -385,6 +385,15 @@ class WebRoomStore:
                 self._delete_room_files(rid)
             except Exception:
                 continue
+        if removed:
+            cutoff_str = format_local(cutoff)
+            rooms_display = ", ".join(sorted(removed))
+            self.log.info(
+                "room-prune removed=%s cutoff=%s rooms=[%s]",
+                len(removed),
+                cutoff_str,
+                rooms_display,
+            )
         return removed
 
     def _delete_room_files(self, room_id: str) -> None:

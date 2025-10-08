@@ -24,6 +24,8 @@ class ParticipationPolicy:
             "min_seconds_between_replies",
             rate_limits.get("min_seconds_between_replies", 1800),
         ))
+        logic_type = str(cooldown.get("logic_type", "OR")).strip().upper()
+        self.cooldown_logic_type = logic_type if logic_type in {"AND", "OR"} else "OR"
         # Anti-spam from top-level rate_limits
         self.window_seconds = int(rate_limits.get("window_seconds", 300))
         self.max_responses = int(rate_limits.get("max_responses", 8))
@@ -162,11 +164,12 @@ class ParticipationPolicy:
             return {"allow": False, "reason": "general-not-allowed-channel"}
 
         # General chat: probabilistic trigger with cooldowns
-        # Only consider if either of the cooldowns has elapsed
-        cooldown_ok = (
-            messages_since_last >= self.cooldown_min_messages
-            or seconds_since_last >= self.cooldown_min_seconds
-        )
+        messages_ok = messages_since_last >= self.cooldown_min_messages
+        seconds_ok = seconds_since_last >= self.cooldown_min_seconds
+        if self.cooldown_logic_type == "AND":
+            cooldown_ok = messages_ok and seconds_ok
+        else:
+            cooldown_ok = messages_ok or seconds_ok
         # Allow override channels to bypass cooldown (still subject to anti-spam and allowlist)
         is_override = event["channel_id"] in getattr(self, "response_chance_override_channels", set())
         if not cooldown_ok and not is_override:

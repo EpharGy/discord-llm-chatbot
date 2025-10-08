@@ -20,11 +20,10 @@ Status (2025‑10‑07): the old single "web-room" flow is replaced with passcod
 - ✅ Reset history toast banner instead of silent transcript replacement.
 - ✅ Room history rehydrated into conversation memory for consistent context after reloads.
 - ✅ Configurable web room retention (message cap + inactive-room pruning).
+- ✅ Unified local-time timestamps across runtime (shared helper in `src/utils/time_utils.py` + cog-local fallbacks).
 
 ### Immediate follow-ups
 
-- [ ] Room lifecycle guardrails
-  - [ ] Consider per-room overrides for retention/pruning (currently global config).
 - [ ] Room management UX
   - [ ] Rename room / change passcode workflow.
 - [ ] Multi-user experience
@@ -33,7 +32,6 @@ Status (2025‑10‑07): the old single "web-room" flow is replaced with passcod
 
 ### Longer-term polish / decisions
 
-- [ ] History budget UI hint (“You’re at 150/500 messages”) once retention is configurable.
 - [ ] Allow per-room deletion/archival via API and admin dashboard.
 - [ ] Multi-user indicators (presence, typing) if we go real-time.
 - [ ] User color logic (hash username → theme-aware palette) & theme contrast tweaks.
