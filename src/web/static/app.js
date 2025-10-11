@@ -35,12 +35,34 @@
   var passCache = {};
   var currentRoom = null;
   var currentRoomName = '';
+  var currentPersonaLabel = '';
   var currentPasscode = null;
   var currentRoomMessageCount = null;
   var currentRoomOwner = null;
   var toastTimer = null;
   var savedRoomId = null;
   try { savedRoomId = localStorage.getItem(LS_ROOM_ID) || null; } catch(_) { savedRoomId = null; }
+  var modelSelectEl = $('modelOverride');
+  var modelResetEl = $('modelReset');
+  var personaSelectEl = $('personaOverride');
+  var personaResetEl = $('personaReset');
+  var loreSelectEl = $('loreOverride');
+  var loreResetEl = $('loreReset');
+  var nsfwSelectEl = $('nsfwOverride');
+  var nsfwResetEl = $('nsfwReset');
+  var overrideState = { model: null, persona: null, lore: null, nsfw: null };
+  var overrideDefaults = { model: null, persona: null, lore: [], nsfw: 'default' };
+  var overrideOptions = { models: [], personas: [], lore: [] };
+  var overridesReady = false;
+  function getPersonaLabelFor(name){
+    if (!name) return '';
+    var items = overrideOptions.personas || [];
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      if (item && item.name === name) return item.label || item.name;
+    }
+    return name;
+  }
   function setStatus(t, cls){ if(statusEl){ statusEl.textContent = t || ''; statusEl.classList.remove('ok','busy'); if (cls) statusEl.classList.add(cls); } }
   function showToast(message, variant){
     if (!toastEl) return;
@@ -67,9 +89,35 @@
     if (normalized === 'openai') return 'OpenAI';
     return val;
   }
+  function getActiveOverrideLabels(){
+    if (!overridesReady) return [];
+    var labels = [];
+    if (overrideState.model) labels.push('Model');
+    if (overrideState.persona) labels.push('Persona');
+    if (Array.isArray(overrideState.lore) && overrideState.lore.length) labels.push('Lore');
+    if (overrideState.nsfw) labels.push('NSFW');
+    return labels;
+  }
+  function arraysEqualUnordered(a, b){
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    var sortedA = a.slice().sort();
+    var sortedB = b.slice().sort();
+    for (var i = 0; i < sortedA.length; i++) {
+      if (sortedA[i] !== sortedB[i]) return false;
+    }
+    return true;
+  }
   function updateControlsToggleLabel(){
     if (!controlsToggleEl) return;
-    controlsToggleEl.textContent = controlsCollapsed ? 'Show Controls' : 'Hide Controls';
+    var base = controlsCollapsed ? 'Show Controls' : 'Hide Controls';
+    var active = getActiveOverrideLabels();
+    var text = base;
+    if (controlsCollapsed && active.length) {
+      text += ' (Overrides: ' + active.join(', ') + ')';
+    }
+    controlsToggleEl.textContent = text;
+    controlsToggleEl.classList.toggle('has-overrides', active.length > 0);
+    if (controlsWrapperEl) controlsWrapperEl.classList.toggle('has-overrides', active.length > 0);
   }
   function applyControlsCollapsedState(){
     if (!controlsWrapperEl) return;
@@ -80,6 +128,181 @@
   function handleMediaChange(e){
     controlsCollapsed = !!(e && e.matches);
     applyControlsCollapsedState();
+  }
+  function setLoreSelection(values){
+    if (!loreSelectEl) return;
+    var set = {};
+    (values || []).forEach(function(v){ set[v] = true; });
+    Array.prototype.forEach.call(loreSelectEl.options, function(opt){
+      opt.selected = !!set[opt.value];
+    });
+  }
+  function handleModelChange(){
+    if (!modelSelectEl) return;
+    var val = (modelSelectEl.value || '').trim();
+    overrideState.model = val ? val : null;
+    updateControlsToggleLabel();
+  }
+  function handleModelReset(){
+    if (!modelSelectEl) return;
+    modelSelectEl.value = '';
+    handleModelChange();
+  }
+  function handlePersonaChange(){
+    if (!personaSelectEl) return;
+    var val = (personaSelectEl.value || '').trim();
+    overrideState.persona = val ? val : null;
+    updateControlsToggleLabel();
+    currentPersonaLabel = val ? getPersonaLabelFor(val) : getPersonaLabelFor(overrideDefaults.persona);
+    updateHeader();
+  }
+  function handlePersonaReset(){
+    if (!personaSelectEl) return;
+    personaSelectEl.value = '';
+    handlePersonaChange();
+  }
+  function handleLoreChange(){
+    if (!loreSelectEl) return;
+    var selected = Array.prototype.filter.call(loreSelectEl.options, function(opt){ return opt.selected && opt.value; }).map(function(opt){ return opt.value; });
+    if (overridesReady && arraysEqualUnordered(selected, overrideDefaults.lore)) {
+      overrideState.lore = null;
+    } else {
+      overrideState.lore = selected;
+    }
+    updateControlsToggleLabel();
+  }
+  function handleLoreReset(){
+    if (!loreSelectEl) return;
+    setLoreSelection(overrideDefaults.lore);
+    handleLoreChange();
+  }
+  function handleNsfwChange(){
+    if (!nsfwSelectEl) return;
+    var val = nsfwSelectEl.value || 'default';
+    overrideState.nsfw = (val && val !== 'default') ? val : null;
+    updateControlsToggleLabel();
+  }
+  function handleNsfwReset(){
+    if (!nsfwSelectEl) return;
+    nsfwSelectEl.value = overrideDefaults.nsfw || 'default';
+    handleNsfwChange();
+  }
+  function resetOverrides(silent){
+    if (!overridesReady) return;
+    if (modelSelectEl) modelSelectEl.value = '';
+    if (personaSelectEl) personaSelectEl.value = '';
+    if (nsfwSelectEl) nsfwSelectEl.value = overrideDefaults.nsfw || 'default';
+    if (loreSelectEl) setLoreSelection(overrideDefaults.lore);
+    handleModelChange();
+    handlePersonaChange();
+    handleNsfwChange();
+    handleLoreChange();
+    currentPersonaLabel = getPersonaLabelFor(overrideDefaults.persona);
+    if (!silent) updateControlsToggleLabel();
+    updateHeader();
+  }
+  function populateModelOptions(){
+    if (!modelSelectEl) return;
+    modelSelectEl.innerHTML = '';
+    var baseOpt = document.createElement('option');
+    baseOpt.value = '';
+    baseOpt.textContent = 'Use configured rotation';
+    modelSelectEl.appendChild(baseOpt);
+    (overrideOptions.models || []).forEach(function(model){
+      var opt = document.createElement('option');
+      opt.value = model;
+      opt.textContent = model;
+      modelSelectEl.appendChild(opt);
+    });
+    var hasModels = !!((overrideOptions.models || []).length);
+    modelSelectEl.disabled = !hasModels;
+    if (modelResetEl) modelResetEl.disabled = !hasModels;
+  }
+  function populatePersonaOptions(){
+    if (!personaSelectEl) return;
+    personaSelectEl.innerHTML = '';
+    var labelPieces = ['Use config persona'];
+    if (overrideDefaults.persona) {
+      var personaMatch = (overrideOptions.personas || []).find(function(p){ return p && p.name === overrideDefaults.persona; });
+      if (personaMatch && personaMatch.label) {
+        labelPieces.push('(' + personaMatch.label + ')');
+      } else {
+        labelPieces.push('(' + overrideDefaults.persona + ')');
+      }
+    }
+    var baseOpt = document.createElement('option');
+    baseOpt.value = '';
+    baseOpt.textContent = labelPieces.join(' ');
+    personaSelectEl.appendChild(baseOpt);
+    (overrideOptions.personas || []).forEach(function(p){
+      if (!p) return;
+      var opt = document.createElement('option');
+      opt.value = p.name;
+      opt.textContent = p.label || p.name;
+      if (p.has_nsfw) opt.textContent += ' (NSFW prompt available)';
+      personaSelectEl.appendChild(opt);
+    });
+    var hasPersonas = !!((overrideOptions.personas || []).length);
+    personaSelectEl.disabled = !hasPersonas;
+    if (personaResetEl) personaResetEl.disabled = !hasPersonas;
+  }
+  function populateLoreOptions(){
+    if (!loreSelectEl) return;
+    loreSelectEl.innerHTML = '';
+    var list = overrideOptions.lore || [];
+    if (!list.length) {
+      var emptyOpt = document.createElement('option');
+      emptyOpt.value = '';
+      emptyOpt.textContent = '(No lore files found)';
+      emptyOpt.disabled = true;
+      loreSelectEl.appendChild(emptyOpt);
+      loreSelectEl.disabled = true;
+      overrideDefaults.lore = [];
+      if (loreResetEl) loreResetEl.disabled = true;
+      return;
+    }
+    loreSelectEl.disabled = false;
+    if (loreResetEl) loreResetEl.disabled = false;
+    list.forEach(function(item){
+      if (!item) return;
+      var opt = document.createElement('option');
+      opt.value = item.id;
+      opt.textContent = item.label || item.id;
+      loreSelectEl.appendChild(opt);
+    });
+    var availableDefaults = [];
+    var valueSet = {};
+    (overrideDefaults.lore || []).forEach(function(id){ valueSet[id] = true; });
+    Array.prototype.forEach.call(loreSelectEl.options, function(opt){
+      if (valueSet[opt.value]) availableDefaults.push(opt.value);
+    });
+    overrideDefaults.lore = availableDefaults;
+    setLoreSelection(overrideDefaults.lore);
+    // Adjust visible size based on available items (min 4, max 8)
+    var size = Math.max(4, Math.min(8, loreSelectEl.options.length));
+    loreSelectEl.size = size;
+  }
+  function initializeOverrideControls(cfg){
+    if (!cfg) return;
+    overrideOptions.models = Array.isArray(cfg.models) ? cfg.models.slice() : [];
+    overrideOptions.personas = Array.isArray(cfg.personas) ? cfg.personas.slice() : [];
+    overrideOptions.lore = Array.isArray(cfg.lore_files) ? cfg.lore_files.slice() : [];
+    overrideDefaults.persona = cfg.defaults && cfg.defaults.persona ? cfg.defaults.persona : null;
+    overrideDefaults.lore = Array.isArray(cfg.defaults && cfg.defaults.lore) ? cfg.defaults.lore.slice() : [];
+    overrideDefaults.nsfw = (cfg.defaults && cfg.defaults.nsfw) ? cfg.defaults.nsfw : 'default';
+    overridesReady = true;
+    populateModelOptions();
+    populatePersonaOptions();
+    populateLoreOptions();
+    if (nsfwSelectEl) {
+      var firstOption = nsfwSelectEl.options && nsfwSelectEl.options[0];
+      if (firstOption) firstOption.textContent = 'Use channel default (config)';
+      nsfwSelectEl.value = overrideDefaults.nsfw || 'default';
+    }
+    resetOverrides(true);
+    currentPersonaLabel = getPersonaLabelFor(overrideDefaults.persona);
+    updateControlsToggleLabel();
+    updateHeader();
   }
   function buildHeaders(includeJson){
     var headers = {};
@@ -143,6 +366,7 @@
     try { if (providerEl && providerEl.value) providerVal = providerEl.value.trim(); } catch(_) {}
     if (!providerVal && currentProviderTheme) providerVal = currentProviderTheme;
     parts.push('Provider: ' + getProviderDisplayName(providerVal));
+    if (currentPersonaLabel) parts.push('Persona: ' + currentPersonaLabel);
     headerTitleEl.textContent = parts.join(' — ');
   }
   function applyProviderTheme(provider){
@@ -329,6 +553,7 @@
     } else if (providerEl && providerEl.value) {
       applyProviderTheme(providerEl.value);
     }
+    currentPersonaLabel = overrideState.persona ? getPersonaLabelFor(overrideState.persona) : getPersonaLabelFor(overrideDefaults.persona);
     updateHeader();
   }
   function populateRoomSelect(rooms){
@@ -494,6 +719,7 @@
       return Promise.reject(new Error('No room selected'));
     }
     options = options || {};
+    var previousRoomId = currentRoom;
     var allowProviderOverride = options.allowProviderOverride !== false;
     var providerValue = '';
     if (allowProviderOverride && providerEl && providerEl.value) providerValue = providerEl.value.trim();
@@ -518,6 +744,9 @@
       setStatus('Ready for new Message.', 'ok');
       var meta = normalizeRoomMeta(resp && resp.room);
       if (!meta || !meta.room_id) throw new Error('Invalid join response');
+      if (previousRoomId !== meta.room_id) {
+        resetOverrides(true);
+      }
   roomsById[meta.room_id] = meta;
       populateRoomSelect(Object.values(roomsById));
       if (typeof passcode === 'string' && passcode) storePass(meta.room_id, passcode);
@@ -587,16 +816,36 @@
     var provider = null; try { if (providerEl && providerEl.value) provider = providerEl.value; } catch(_) {}
     var passcode = currentPasscode || getStoredPass(currentRoom) || '';
     currentPasscode = passcode || null;
-    fetch('/chat', { method: 'POST', headers: headers, body: JSON.stringify({
-        content: content,
-        user_name: user,
-        user_id: user.toLowerCase(),
-        provider: provider,
-        channel_id: currentRoom,
-        passcode: passcode
-      }) })
+    var payload = {
+      content: content,
+      user_name: user,
+      user_id: user.toLowerCase(),
+      provider: provider,
+      channel_id: currentRoom,
+      passcode: passcode
+    };
+    if (overrideState.model) payload.model_override = overrideState.model;
+    if (overrideState.persona) payload.persona_override = overrideState.persona;
+    if (Array.isArray(overrideState.lore)) payload.lore_override = overrideState.lore;
+    if (overrideState.nsfw) payload.nsfw_override = overrideState.nsfw;
+    fetch('/chat', { method: 'POST', headers: headers, body: JSON.stringify(payload) })
       .then(function(res){ if (!res.ok) { appendRawHtml(bubble('Error', mdToHtml('Error ' + res.status + ' ' + res.statusText), 'bot')); return res.text().then(function(t){ throw new Error(t); }); } return res.json(); })
-  .then(function(json){ if (!json) return; var reply = (json.reply ? json.reply : '(no reply)'); appendRawHtml(bubble(bot, mdToHtml(reply), 'bot')); if (msgEl) msgEl.value = ''; setStatus('Ready for new Message.', 'ok'); })
+  .then(function(json){
+        if (!json) return;
+        var reply = (json.reply ? json.reply : '(no reply)');
+        var personaName = null;
+        if (overrideState.persona) {
+          personaName = getPersonaLabelFor(overrideState.persona);
+        } else if (overrideDefaults.persona) {
+          personaName = getPersonaLabelFor(overrideDefaults.persona);
+        } else if (currentPersonaLabel) {
+          personaName = currentPersonaLabel;
+        }
+        var authorLabel = personaName || bot;
+        appendRawHtml(bubble(authorLabel, mdToHtml(reply), 'bot'));
+        if (msgEl) msgEl.value = '';
+        setStatus('Ready for new Message.', 'ok');
+      })
   .catch(function(e){ appendRawHtml(bubble('Error', mdToHtml(String(e)), 'bot')); setStatus('Ready for new Message.', 'ok'); });
   }
   function autoGrow(){
@@ -648,6 +897,31 @@
       }
       updateHeader();
     });
+    if (modelSelectEl) {
+      modelSelectEl.addEventListener('change', handleModelChange);
+    }
+    if (modelResetEl) {
+      modelResetEl.addEventListener('click', function(){ handleModelReset(); });
+    }
+    if (personaSelectEl) {
+      personaSelectEl.addEventListener('change', handlePersonaChange);
+    }
+    if (personaResetEl) {
+      personaResetEl.addEventListener('click', function(){ handlePersonaReset(); });
+    }
+    if (loreSelectEl) {
+      loreSelectEl.addEventListener('change', handleLoreChange);
+      loreSelectEl.addEventListener('input', handleLoreChange);
+    }
+    if (loreResetEl) {
+      loreResetEl.addEventListener('click', function(){ handleLoreReset(); });
+    }
+    if (nsfwSelectEl) {
+      nsfwSelectEl.addEventListener('change', handleNsfwChange);
+    }
+    if (nsfwResetEl) {
+      nsfwResetEl.addEventListener('click', function(){ handleNsfwReset(); });
+    }
     if (resetEl) resetEl.addEventListener('click', function(){
       if (!currentRoom){
         showToast('Join a room before resetting history.', 'error');
@@ -747,6 +1021,7 @@
           populateRoomSelect(j.rooms);
         }
       } catch(_) {}
+      try { initializeOverrideControls(j); } catch(_) {}
       try { var saved = localStorage.getItem(LS_KEY); if (saved && tokenEl && !tokenEl.value) tokenEl.value = saved; } catch(_) {}
     }).catch(function(){});
     refreshRooms().then(function(rooms){

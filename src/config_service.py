@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import copy
 import re
 import yaml
 
@@ -65,6 +66,17 @@ class ConfigService:
 
     def context(self) -> dict:
         return self._cfg.raw.get("context", {})
+
+    def _safe_persona_name(self, name: str | None) -> str | None:
+        if not isinstance(name, str) or not name.strip():
+            return None
+        name = name.strip()
+        if not re.match(r"^[A-Za-z0-9_-]+$", name):
+            return None
+        root = Path("personas") / name
+        if not root.exists() or not root.is_dir():
+            return None
+        return name
 
     # ---------- Persona folder-based configuration ----------
     def persona_name(self) -> str:
@@ -388,6 +400,155 @@ class ConfigService:
         except Exception:
             pass
         return list(dict.fromkeys(glob_list + add_list))
+
+    # ---------- Override helpers ----------
+
+    def persona_bundle(self, name: str) -> dict | None:
+        safe_name = self._safe_persona_name(name)
+        if not safe_name:
+            return None
+        clone = ConfigService(self._path)
+        clone._cfg = Config(raw=copy.deepcopy(self._cfg.raw))
+        clone._cfg.raw['persona'] = safe_name
+        clone._persona_name_cache = None
+        clone._persona_yaml_path = None
+        clone._persona_yaml_mtime = 0
+        clone._persona_cfg_cache = None
+        persona_path = clone.persona_path()
+        try:
+            persona_text = Path(persona_path).read_text(encoding='utf-8')
+        except Exception:
+            persona_text = ""
+        try:
+            persona_meta = clone._persona_cfg() or {}
+        except Exception:
+            persona_meta = {}
+        system_prompt_path = clone.system_prompt_path()
+        try:
+            system_prompt_text = Path(system_prompt_path).read_text(encoding='utf-8')
+        except Exception:
+            system_prompt_text = ""
+        system_prompt_nsfw_path = clone.system_prompt_path_nsfw()
+        if system_prompt_nsfw_path:
+            try:
+                system_prompt_nsfw_text = Path(system_prompt_nsfw_path).read_text(encoding='utf-8')
+            except Exception:
+                system_prompt_nsfw_text = None
+        else:
+            system_prompt_nsfw_text = None
+        label = persona_meta.get('display_name') if isinstance(persona_meta, dict) else None
+        if not label:
+            label = persona_meta.get('name') if isinstance(persona_meta, dict) else None
+        if not label:
+            label = safe_name
+        context_template_path = clone.context_template_path()
+        try:
+            context_template_text = Path(context_template_path).read_text(encoding='utf-8')
+        except Exception:
+            context_template_text = ""
+        persona_lore_paths: list[str] = []
+        try:
+            raw_lore = persona_meta.get('lore') if isinstance(persona_meta, dict) else None
+            if raw_lore:
+                items = raw_lore if isinstance(raw_lore, (list, tuple)) else [raw_lore]
+                for item in items:
+                    try:
+                        candidate = clone._resolve_rel(str(item), clone._persona_root())
+                        if candidate and Path(candidate).exists():
+                            persona_lore_paths.append(str(Path(candidate).resolve()))
+                    except Exception:
+                        continue
+        except Exception:
+            persona_lore_paths = []
+        base_lore_paths: list[str] = []
+        try:
+            base_lore_paths = [str(Path(p).resolve()) for p in clone.lore_paths()]
+        except Exception:
+            base_lore_paths = []
+        return {
+            'name': safe_name,
+            'label': label,
+            'persona_path': persona_path,
+            'persona_text': persona_text,
+            'persona_meta': persona_meta,
+            'system_prompt_path': system_prompt_path,
+            'system_prompt_text': system_prompt_text,
+            'system_prompt_nsfw_path': system_prompt_nsfw_path,
+            'system_prompt_nsfw_text': system_prompt_nsfw_text,
+            'context_template_path': context_template_path,
+            'context_template_text': context_template_text,
+            'persona_lore_paths': persona_lore_paths,
+            'base_lore_paths': base_lore_paths,
+        }
+
+    def available_personas(self) -> list[dict]:
+        root = Path('personas')
+        if not root.exists():
+            return []
+        options: list[dict] = []
+        for entry in sorted(root.iterdir()):
+            if not entry.is_dir():
+                continue
+            bundle = self.persona_bundle(entry.name)
+            if not bundle:
+                continue
+            options.append({
+                'name': bundle['name'],
+                'label': bundle.get('label') or bundle['name'],
+                'has_nsfw': bool(bundle.get('system_prompt_nsfw_text')),
+            })
+        return options
+
+    def available_lore_files(self) -> list[dict]:
+        root = Path('lore')
+        if not root.exists() or not root.is_dir():
+            return []
+        out: list[dict] = []
+        for path in sorted(root.rglob('*')):
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in {'.json', '.md'}:
+                continue
+            try:
+                rel = path.relative_to(root)
+                rel_str = rel.as_posix()
+                identifier = f"lore/{rel_str}"
+            except Exception:
+                rel_str = path.name
+                identifier = path.name
+            out.append({
+                'id': identifier,
+                'label': rel_str,
+                'abs_path': str(path.resolve()),
+            })
+        return out
+
+    def resolve_lore_ids(self, identifiers: list[str]) -> list[str]:
+        if not identifiers:
+            return []
+        catalog = {item['id']: item['abs_path'] for item in self.available_lore_files()}
+        resolved: list[str] = []
+        for ident in identifiers:
+            path = catalog.get(str(ident))
+            if path:
+                resolved.append(path)
+        return resolved
+
+    def lore_ids_for_paths(self, paths: list[str]) -> list[str]:
+        if not paths:
+            return []
+        catalog = self.available_lore_files()
+        reverse = {item['abs_path']: item['id'] for item in catalog}
+        resolved: list[str] = []
+        for p in paths:
+            try:
+                abs_path = str(Path(p).resolve())
+            except Exception:
+                continue
+            ident = reverse.get(abs_path)
+            if ident:
+                resolved.append(ident)
+        return resolved
 
     def lore_max_fraction(self) -> float:
         self._maybe_reload()

@@ -21,6 +21,7 @@ from .llm.multi_backend_client import ContextualMultiBackendClient
 from .conversation_batcher import ConversationBatcher
 from .lore_service import LoreService
 from .utils.time_utils import ISO_FORMAT, ensure_local, format_local, now_local
+from .utils.logfmt import fmt
 from .web_room_store import WebRoomStore
 
 
@@ -31,6 +32,10 @@ class ChatIn(BaseModel):
     content: str
     provider: str | None = None  # 'openrouter' | 'openai'
     passcode: str | None = None
+    model_override: str | None = None
+    persona_override: str | None = None
+    lore_override: list[str] | None = None
+    nsfw_override: str | None = None
 
 
 class RoomSummary(BaseModel):
@@ -138,7 +143,7 @@ def build_router_from_config(cfg: ConfigService) -> MessageRouter:
         llm=llm,
         model_cfg=model_cfg,
         lore=lore,
-        lore_config={"enabled": cfg.lore_enabled(), "max_fraction": cfg.lore_max_fraction()},
+        lore_config={"enabled": cfg.lore_enabled(), "max_fraction": cfg.lore_max_fraction(), "md_priority": cfg.lore_md_priority()},
     )
     return router
 
@@ -160,6 +165,25 @@ def create_app() -> FastAPI:
     )
     hydrated_cache: dict[str, tuple[int, str | None]] = {}
     prune_task: asyncio.Task | None = None
+
+    def _model_list() -> list[str]:
+        models = cfg.model().get("models")
+        if isinstance(models, str):
+            return [m.strip() for m in models.split(',') if m.strip()]
+        if isinstance(models, list):
+            return [str(m) for m in models if str(m).strip()]
+        return []
+
+    def _persona_options() -> list[dict]:
+        return cfg.available_personas()
+
+    def _persona_bundle(name: str | None) -> dict | None:
+        if not name:
+            return None
+        return cfg.persona_bundle(name)
+
+    def _lore_catalog() -> list[dict]:
+        return cfg.available_lore_files()
 
     def _format_timestamp(dt: datetime) -> str:
         return format_local(dt)
@@ -371,8 +395,8 @@ def create_app() -> FastAPI:
                     b.clear(room_id)
             except Exception:
                 pass
-                room_store.delete_room(room_id)
-                hydrated_cache.pop(room_id, None)
+            room_store.delete_room(room_id)
+            hydrated_cache.pop(room_id, None)
             log.info(f"room-delete {room_id}")
             return {"ok": True}
         except HTTPException:
@@ -387,6 +411,11 @@ def create_app() -> FastAPI:
         rooms = [_room_summary(meta).model_dump() for meta in sorted(room_store.list_rooms(), key=lambda m: m.last_active, reverse=True)]
         # Prefer openrouter as default if available, unless user persisted choice on client
         default_provider = 'openrouter' if 'openrouter' in provs else ('openai' if 'openai' in provs else None)
+        persona_opts = _persona_options()
+        lore_catalog = _lore_catalog()
+        lore_options = [{'id': item['id'], 'label': item['label']} for item in lore_catalog]
+        model_options = _model_list()
+        default_lore_ids = cfg.lore_ids_for_paths(cfg.lore_paths())
         return {
             "bot_name": bot_label,
             "default_user_name": "You",
@@ -394,6 +423,16 @@ def create_app() -> FastAPI:
             "providers": provs,
             "default_provider": default_provider,
             "rooms": rooms,
+            "models": model_options,
+            "personas": persona_opts,
+            "lore_files": lore_options,
+            "defaults": {
+                "persona": cfg.persona_name(),
+                "lore": default_lore_ids,
+                "nsfw": "default",
+                "model": None,
+                "provider": default_provider,
+            },
         }
 
     @app.post("/chat")
@@ -418,6 +457,41 @@ def create_app() -> FastAPI:
         if inp.provider:
             room_store.set_provider(ch_id, inp.provider)
         _hydrate_memory(meta)
+
+        persona_bundle = None
+        persona_name = (inp.persona_override or '').strip() if inp.persona_override else None
+        if persona_name:
+            persona_bundle = _persona_bundle(persona_name)
+        lore_override_paths = None
+        lore_override_ids = inp.lore_override if inp.lore_override is not None else None
+        if lore_override_ids is not None:
+            try:
+                lore_override_paths = cfg.resolve_lore_ids(list(lore_override_ids))
+            except Exception:
+                lore_override_paths = []
+        nsfw_override = (inp.nsfw_override or '').strip().lower() if inp.nsfw_override else None
+        if nsfw_override not in ("force_on", "force_off"):
+            nsfw_override = None
+        model_override = (inp.model_override or '').strip() if inp.model_override else None
+        web_overrides: dict[str, object] = {}
+        if persona_bundle:
+            web_overrides["persona"] = persona_bundle
+        if lore_override_ids is not None:
+            web_overrides["lore_paths"] = lore_override_paths or []
+        if nsfw_override:
+            web_overrides["nsfw"] = nsfw_override
+        if model_override:
+            web_overrides["model"] = model_override
+
+        if web_overrides:
+            try:
+                log.info(
+                    "override-submit %s %s",
+                    fmt('channel', ch_id),
+                    fmt('keys', ",".join(sorted(web_overrides.keys()))),
+                )
+            except Exception:
+                pass
 
         now = now_local()
         now_iso = _format_timestamp(now)
@@ -444,11 +518,15 @@ def create_app() -> FastAPI:
             "guild_name": "WEB",
             "correlation_id": correlation_id,
         }
+        if web_overrides:
+            event['web_overrides'] = web_overrides
 
         last_id: str | None = None
         try:
             # Record user event for context
-            router.memory.record(event)
+            event_for_memory = dict(event)
+            event_for_memory.pop('web_overrides', None)
+            router.memory.record(event_for_memory)
             room_store.append_message(
                 ch_id,
                 {
@@ -461,8 +539,28 @@ def create_app() -> FastAPI:
                 },
             )
             last_id = mid
-            # NSFW=true channel stub
-            channel_obj = SimpleNamespace(id=ch_id, name="web-room", nsfw=True, parent=None)
+            # Web channel inherits NSFW status from override (default: safe)
+            provider_lower = None
+            try:
+                if inp.provider:
+                    provider_lower = inp.provider.strip().lower()
+                elif getattr(meta, "provider", None):
+                    provider_lower = str(meta.provider).strip().lower()
+            except Exception:
+                provider_lower = None
+            channel_nsfw = False
+            if nsfw_override == "force_on":
+                channel_nsfw = True
+            elif nsfw_override == "force_off":
+                channel_nsfw = False
+            else:
+                try:
+                    allow_nsfw = bool(cfg.participation().get("allow_nsfw", True))
+                except Exception:
+                    allow_nsfw = True
+                if allow_nsfw and provider_lower == "openrouter":
+                    channel_nsfw = True
+            channel_obj = SimpleNamespace(id=ch_id, name="web-room", nsfw=channel_nsfw, parent=None)
             # Tag web context for provider selection
             event['web'] = True
             # Optional provider override from UI
@@ -471,6 +569,9 @@ def create_app() -> FastAPI:
                     event['provider'] = inp.provider.lower()
             except Exception:
                 pass
+
+            if model_override:
+                event.setdefault('web_overrides', web_overrides or {})
 
             reply = await router.build_batch_reply(cid=ch_id, events=[event], channel=channel_obj, allow_outside_window=True)
             reply = reply or ""

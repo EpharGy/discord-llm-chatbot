@@ -30,6 +30,19 @@
   .controls-wrapper { display: flex; flex-direction: column; gap: var(--space-1); }
   .controls-wrapper.collapsed { display: none; }
   #room-controls, #controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
+  #overrideControls { display: flex; flex-direction: column; gap: 0.6rem; }
+  .override-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+  .override-row label { font-weight: 600; min-width: 4.5rem; }
+  .override-reset { border: 1px solid var(--log-border); background: transparent; color: inherit; padding: 0.35rem 0.75rem; border-radius: 999px; font-size: 0.85rem; cursor: pointer; transition: background 0.2s ease, color 0.2s ease; }
+  .override-reset:hover { background: rgba(15, 23, 42, 0.06); }
+  .dark .override-reset { border-color: var(--log-border-dark); }
+  .dark .override-reset:hover { background: rgba(148, 163, 184, 0.15); }
+  .override-multiselect { display: flex; flex-direction: column; gap: 0.25rem; }
+  .override-multiselect select { min-width: 12rem; }
+  .override-hint { font-size: 0.75rem; color: #6b7280; }
+  .dark .override-hint { color: #94a3b8; }
+  .controls-toggle.has-overrides::after { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #f97316; margin-left: 0.5rem; box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.25); }
+  .controls-wrapper.has-overrides { box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.35); border-radius: 12px; }
   .danger-btn { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
   .danger-btn:hover { background: #fee2e2; }
   .dark .danger-btn { background: #3f1a1c; color: #fca5a5; border-color: #7f1d1d; }
@@ -146,8 +159,8 @@
       .controls-wrapper { border: 1px solid var(--log-border); border-radius: 12px; padding: 0.75rem; background: rgba(255,255,255,0.95); box-shadow: 0 8px 24px rgba(15,23,42,0.15); }
       .dark .controls-wrapper { border-color: var(--log-border-dark); background: rgba(15,17,21,0.95); }
       .controls-wrapper.collapsed { display: none; }
-      #room-controls, #controls { flex-direction: column; align-items: stretch; }
-      #room-controls select, #controls select, #controls input { min-width: 100%; max-width: 100%; }
+  #room-controls, #controls, #overrideControls { flex-direction: column; align-items: stretch; }
+  #room-controls select, #controls select, #controls input, #overrideControls select { min-width: 100%; max-width: 100%; }
       #input-row { flex-direction: column; }
       #input-row .btns button { flex: 1 1 0; }
       input, button, textarea { font-size: 1rem; padding: 0.65rem; }
@@ -176,6 +189,35 @@
       <select id="provider"></select>
       <input id="token" type="password" placeholder="API token (if required)">
       <button id="resetBtn" type="button">Reset History</button>
+    </div>
+    <div id="overrideControls" class="override-controls">
+      <div class="override-row">
+        <label for="modelOverride">Model:</label>
+        <select id="modelOverride"></select>
+        <button id="modelReset" type="button" class="override-reset">Reset</button>
+      </div>
+      <div class="override-row">
+        <label for="personaOverride">Persona:</label>
+        <select id="personaOverride"></select>
+        <button id="personaReset" type="button" class="override-reset">Reset</button>
+      </div>
+      <div class="override-row">
+        <label for="loreOverride">Lore:</label>
+        <div class="override-multiselect">
+          <select id="loreOverride" multiple size="4"></select>
+          <span class="override-hint">Hold Ctrl (or Cmd) to select multiple lore files.</span>
+        </div>
+        <button id="loreReset" type="button" class="override-reset">Reset</button>
+      </div>
+      <div class="override-row">
+        <label for="nsfwOverride">NSFW:</label>
+        <select id="nsfwOverride">
+          <option value="default">Use channel default</option>
+          <option value="force_on">Force NSFW On</option>
+          <option value="force_off">Force NSFW Off</option>
+        </select>
+        <button id="nsfwReset" type="button" class="override-reset">Reset</button>
+      </div>
     </div>
   </div>
   <div id="log"></div>

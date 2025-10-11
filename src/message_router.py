@@ -35,6 +35,40 @@ class MessageRouter:
         self.lore = lore
         self.lore_cfg = lore_config or {"enabled": False, "max_fraction": 0.33}
 
+    def _system_message_for_overrides(self, *, is_nsfw: bool, persona_override: dict | None) -> str:
+        if not persona_override:
+            return self.tmpl.build_system_message_for(is_nsfw=is_nsfw)
+        try:
+            system_text = None
+            if is_nsfw:
+                system_text = persona_override.get('system_prompt_nsfw_text') or persona_override.get('system_prompt_text')
+            else:
+                system_text = persona_override.get('system_prompt_text')
+            persona_text = persona_override.get('persona_text') or ''
+            if not system_text:
+                return self.tmpl.build_system_message_for(is_nsfw=is_nsfw)
+            combined = system_text.strip()
+            if persona_text.strip():
+                combined = f"{combined}\n\n[Persona]\n{persona_text.strip()}"
+            return combined
+        except Exception:
+            return self.tmpl.build_system_message_for(is_nsfw=is_nsfw)
+
+    def _infer_provider_for_model(self, model_name: str, fallback: str | None = None) -> str | None:
+        name = (model_name or '').lower().strip()
+        if not name:
+            return fallback
+        # Heuristics: colon suffixes and vendor-prefixed identifiers indicate OpenRouter routing
+        if ':' in name:
+            return 'openrouter'
+        if '/' in name:
+            vendor = name.split('/', 1)[0]
+            if vendor and vendor not in {'local', 'internal'}:
+                return 'openrouter'
+        if name.startswith('gpt-') or name.startswith('o1') or name.startswith('o3'):
+            return 'openai'
+        return fallback
+
     # ------------------------------------------------------------------
     # Shared prompt assembly + budgeting helper (single-turn & batch)
     # ------------------------------------------------------------------
@@ -1075,6 +1109,35 @@ class MessageRouter:
                     return None
         # Aggregate user batch text (content only) to reduce false matches on author names
         batch_text = "\n".join((e.get('content') or '') for e in events)
+        override_payload: dict | None = None
+        for e in events:
+            if isinstance(e, dict):
+                payload = e.get('web_overrides')
+                if isinstance(payload, dict):
+                    override_payload = payload
+        persona_override = None
+        lore_override_paths = None
+        model_override = None
+        if override_payload:
+            maybe_persona = override_payload.get('persona')
+            if isinstance(maybe_persona, dict):
+                persona_override = maybe_persona
+            maybe_lore = override_payload.get('lore_paths')
+            if isinstance(maybe_lore, list):
+                lore_override_paths = [str(p) for p in maybe_lore if p]
+            maybe_model = override_payload.get('model')
+            if isinstance(maybe_model, str) and maybe_model.strip():
+                model_override = maybe_model.strip()
+            try:
+                self.log.info(
+                    "[override-active] %s %s %s %s",
+                    fmt('channel', cid),
+                    fmt('persona', persona_override.get('name') if persona_override else 'default'),
+                    fmt('model', model_override or 'default'),
+                    fmt('lore_count', len(lore_override_paths) if lore_override_paths is not None else 'default'),
+                )
+            except Exception:
+                pass
         # NSFW system selection
         is_nsfw = False
         try:
@@ -1082,8 +1145,9 @@ class MessageRouter:
                 is_nsfw = bool(getattr(channel, 'nsfw', False)) or bool(getattr(getattr(channel, 'parent', None), 'nsfw', False))
         except Exception:
             pass
-        system_msg = {"role": "system", "content": self.tmpl.build_system_message_for(is_nsfw=is_nsfw)}
+        system_msg = {"role": "system", "content": self._system_message_for_overrides(is_nsfw=is_nsfw, persona_override=persona_override)}
         # Config-driven parameters
+        cfg = None
         try:
             from .config_service import ConfigService
             cfg = ConfigService('config.yaml')
@@ -1093,6 +1157,7 @@ class MessageRouter:
             reserve = int(cfg.response_tokens_max())
         except Exception:
             use_tmpl, keep_tail, max_ctx, reserve = True, 2, 8192, 512
+            cfg = None
         prompt_budget = max(1, max_ctx - reserve)
         # Recent context
         recent = self.memory.get_recent(cid, limit=self.policy.window_size())
@@ -1130,9 +1195,66 @@ class MessageRouter:
         except Exception:
             pass
         user_msg = {'role': 'user', 'content': batch_text}
+        context_template_backup: str | None = None
+        if persona_override and persona_override.get('context_template_text') is not None:
+            try:
+                context_template_backup = getattr(self.tmpl, 'context_template', None)
+                self.tmpl.context_template = persona_override.get('context_template_text') or ''
+            except Exception:
+                context_template_backup = None
+        persona_lore_default: list[str] = []
+        base_lore_paths_default: list[str] = []
+        if persona_override:
+            persona_lore_default = persona_override.get('persona_lore_paths') or []
+            base_lore_paths_default = persona_override.get('base_lore_paths') or []
+        elif cfg:
+            try:
+                default_bundle = cfg.persona_bundle(cfg.persona_name()) or {}
+                persona_lore_default = default_bundle.get('persona_lore_paths', []) or []
+                base_lore_paths_default = default_bundle.get('base_lore_paths', []) or []
+            except Exception:
+                persona_lore_default = []
+                base_lore_paths_default = []
         system_blocks = [system_msg]
         # Lore block
         builder = getattr(self.lore, 'build_lore_block', None) if getattr(self, 'lore', None) is not None else None
+        if (persona_override is not None) or (lore_override_paths is not None):
+            combined_paths: list[str] = []
+            for p in base_lore_paths_default or []:
+                if p:
+                    combined_paths.append(p)
+            for p in persona_lore_default or []:
+                if p:
+                    combined_paths.append(p)
+            if lore_override_paths is not None:
+                for p in lore_override_paths or []:
+                    if p:
+                        combined_paths.append(p)
+            normalized_paths: list[str] = []
+            for p in combined_paths:
+                try:
+                    normalized_paths.append(str(Path(p).resolve()))
+                except Exception:
+                    continue
+            dedup_paths: list[str] = []
+            seen: set[str] = set()
+            for p in normalized_paths:
+                if p not in seen:
+                    seen.add(p)
+                    dedup_paths.append(p)
+            if dedup_paths:
+                try:
+                    from .lore_service import LoreService as _Lore
+                    override_lore = _Lore(dedup_paths, md_priority=self.lore_cfg.get('md_priority', 'low'))
+                    builder = getattr(override_lore, 'build_lore_block', None)
+                    self.log.debug(
+                        "[override-lore] %s %s %s",
+                        fmt('channel', cid),
+                        fmt('paths', len(dedup_paths)),
+                        fmt('persona_paths', len(persona_lore_default or [])),
+                    )
+                except Exception:
+                    builder = getattr(self.lore, 'build_lore_block', None) if getattr(self, 'lore', None) is not None else None
         if builder and self.lore_cfg.get('enabled'):
             try:
                 lore_fraction = float(self.lore_cfg.get('max_fraction', 0.33))
@@ -1162,6 +1284,11 @@ class MessageRouter:
                         context_block = context_block[first_idx:]
                 if context_block:
                     system_blocks.append({'role': 'system', 'content': context_block})
+            except Exception:
+                pass
+        if context_template_backup is not None:
+            try:
+                self.tmpl.context_template = context_template_backup
             except Exception:
                 pass
         # Budget using shared helper
@@ -1201,6 +1328,16 @@ class MessageRouter:
             models_to_try = [str(m) for m in cfg_models if str(m).strip()]
         else:
             models_to_try = []
+        if model_override:
+            prioritized: list[str] = []
+            seen_models: set[str] = set()
+            prioritized.append(model_override)
+            seen_models.add(model_override)
+            for m in models_to_try:
+                if m and m not in seen_models:
+                    prioritized.append(m)
+                    seen_models.add(m)
+            models_to_try = prioritized
         allow_auto = bool(self.model_cfg.get('allow_auto_fallback', False))
         stops = self.model_cfg.get('stop')
         correlation_id = f"{cid}-batch"
@@ -1222,22 +1359,42 @@ class MessageRouter:
                     base_cf['provider_name'] = prov
         except Exception:
             pass
+        if model_override:
+            inferred_provider = self._infer_provider_for_model(model_override, base_cf.get('provider_name'))
+            if inferred_provider and inferred_provider != base_cf.get('provider_name'):
+                base_cf['provider_name'] = inferred_provider
+                try:
+                    self.log.debug(
+                        "[override-provider-hint] %s %s",
+                        fmt('channel', cid),
+                        fmt('provider', inferred_provider),
+                    )
+                except Exception:
+                    pass
         # Determine providers for this context if supported
         provider_indices = [0]
         try:
             if hasattr(self.llm, 'providers_for_context'):
                 plist = self.llm.providers_for_context(base_cf)  # type: ignore[attr-defined]
-                # If a specific provider_name was requested, find its index by class
                 prov_name = base_cf.get('provider_name')
-                if prov_name and isinstance(plist, list) and plist:
-                    target_cls = 'OpenRouterClient' if prov_name == 'openrouter' else ('OpenAICompatClient' if prov_name == 'openai' else None)
-                    if target_cls:
-                        for i, p in enumerate(plist):
-                            if p.__class__.__name__ == target_cls:
-                                provider_indices = [i]
-                                break
-                elif isinstance(plist, list) and len(plist) > 1:
-                    provider_indices = list(range(len(plist)))
+                if isinstance(plist, list) and plist:
+                    indices = list(range(len(plist)))
+                    if prov_name:
+                        target_cls = 'OpenRouterClient' if prov_name == 'openrouter' else ('OpenAICompatClient' if prov_name == 'openai' else None)
+                        if target_cls:
+                            preferred = None
+                            for i, p in enumerate(plist):
+                                if p.__class__.__name__ == target_cls:
+                                    preferred = i
+                                    break
+                            if preferred is not None:
+                                provider_indices = [preferred] + [idx for idx in indices if idx != preferred]
+                            else:
+                                provider_indices = indices
+                        else:
+                            provider_indices = indices
+                    elif len(indices) > 1:
+                        provider_indices = indices
         except Exception:
             pass
 
