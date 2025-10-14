@@ -1,50 +1,5 @@
 # TODO
 
-## web chat room handling
-
-Status (2025‑10‑07): the old single "web-room" flow is replaced with passcode-gated rooms that persist to disk (`src/web/data/<room>/messages.jsonl`). The web UI now lists rooms, lets you create/join them with a passcode, shows stored transcripts, and clears history per room. No more default room exists.
-
-### What’s shipped
-
-- ✅ Room creation dialog (name + required passcode) with auto-join.
-- ✅ Room list endpoint + dropdown selector in the UI (shows 🔒 when locked).
-- ✅ Passcode validation on join/chat/reset; passcodes cached locally per browser.
-- ✅ Transcript persistence per room (JSONL) and replay on reload.
-- ✅ Empty-state guidance when no room is joined, plus per-room reset hook.
-- ✅ Provider preference per room persisted server-side and re-applied on join/chat.
-- ✅ Provider-aware theming (OpenRouter blue vs OpenAI red) driven from the dropdown selection.
-- ✅ Compact header controls: mobile-collapsible overlay, smaller inputs, and passcode prompt workflow.
-- ✅ Delete room action (backend endpoint + UI button with confirmation and transcript purge).
-- ✅ OpenRouter light-mode user bubble contrast fix.
-- ✅ Room metadata surfaced via `/rooms` and `/web-config` (provider, last active, counts).
-- ✅ Reset history toast banner instead of silent transcript replacement.
-- ✅ Room history rehydrated into conversation memory for consistent context after reloads.
-- ✅ Configurable web room retention (message cap + inactive-room pruning).
-- ✅ Unified local-time timestamps across runtime (shared helper in `src/utils/time_utils.py` + cog-local fallbacks).
-
-### Immediate follow-ups
-
-- [ ] Room management UX
-  - [ ] Rename room / change passcode workflow.
-- [ ] Multi-user experience
-  - [ ] Decide on real-time sync (polling vs SSE/WebSocket) so two browsers see updates instantly.
-  - [ ] Clarify access model when multiple users share a passcode (do we need per-user labels/state?).
-
-### Longer-term polish / decisions
-
-- [ ] Allow per-room deletion/archival via API and admin dashboard.
-- [ ] Multi-user indicators (presence, typing) if we go real-time.
-- [ ] User color logic (hash username → theme-aware palette) & theme contrast tweaks.
-- [ ] Optional welcome message / instructions per room on first join.
-- [ ] Evaluate encrypting passcodes at rest or rotating salts (currently salted SHA256 stored on disk).
-
-Reference decisions
-
-- Passcodes are mandatory; creating a room without one is blocked (keeps lightweight security expectations clear).
-- No global/default room: after cleanup, only explicit rooms remain on disk.
-- Transcript format: append-only JSONL per room so we can stream/load chunks later. Keep this in mind if we migrate to SQLite.
-- Frontend auto-joins only when a cached passcode exists; otherwise it stays in empty-state to avoid leaking room names without authorization.
-
 ## Persona Hot‑Swap
 
 Goal: Switch persona at runtime (without restart) and align bot outward identity (display name, avatar) to the selected persona.

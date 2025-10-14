@@ -6,6 +6,7 @@ from discord.ext import commands
 
 from src.config_service import ConfigService
 from src.logger_factory import set_log_levels, get_logger
+from src.participation_policy import ParticipationPolicy
 import yaml as _pyyaml
 
 log = get_logger("Cog.Admin")
@@ -157,6 +158,100 @@ class AdminCog(commands.Cog):
             await interaction.followup.send(f"LOG_PROMPTS set to {enabled}.", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"Failed to update LOG_PROMPTS: {e}", ephemeral=True)
+
+    # --- General chat channel management ---
+
+    def _update_channel_flag(self, *, path: list[str], channel_id: int, enabled: bool) -> tuple[bool, list[str]]:
+        data = self._read_config("config.yaml")
+        node = data
+        for key in path[:-1]:
+            if key not in node or not isinstance(node[key], dict):
+                node[key] = {}
+            node = node[key]
+        leaf = path[-1]
+        raw_list = node.get(leaf)
+        if not isinstance(raw_list, list):
+            raw_list = []
+        raw_list = [str(x) for x in raw_list]
+        chan = str(channel_id)
+        existing = list(raw_list)
+        changed = False
+        if enabled:
+            if chan not in existing:
+                raw_list.append(chan)
+                changed = True
+        else:
+            new_list = [c for c in raw_list if c != chan]
+            if len(new_list) != len(raw_list):
+                changed = True
+            raw_list = new_list
+        node[leaf] = raw_list
+        if changed:
+            self._write_config("config.yaml", data)
+        return changed, raw_list
+
+    def _reload_participation_policy(self) -> bool:
+        router = getattr(self.bot, "router", None)
+        if router is None:
+            return False
+        try:
+            cfg = ConfigService("config.yaml")
+            new_policy = ParticipationPolicy(cfg.rate_limits(), cfg.participation())
+            try:
+                new_policy.set_window_size(cfg.window_size())
+            except Exception:
+                pass
+            router.policy = new_policy
+            return True
+        except Exception as exc:
+            log.error(f"policy-reload-failed {exc}")
+            return False
+
+    async def _handle_general_toggle(self, interaction: discord.Interaction, *, enabled: bool, override: bool = False) -> None:
+        channel = interaction.channel
+        if channel is None:
+            await interaction.response.send_message("This command must be used in a channel context.", ephemeral=True)
+            return
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except Exception:
+            pass
+        path = ["participation", "general_chat", "response_chance_override" if override else "allowed_channels"]
+        changed, values = self._update_channel_flag(path=path, channel_id=channel.id, enabled=enabled)
+        status = "enabled" if enabled else "disabled"
+        scope = "override" if override else "general chat"
+        mention = f"<#{channel.id}>"
+        try:
+            uname = getattr(interaction.user, "display_name", None) or getattr(interaction.user, "name", "user")
+            log.info(
+                f"[Discord] {uname} used /{'llmbot_general_override' if override else 'llmbot_general'} {enabled} in {channel.id}"
+            )
+        except Exception:
+            pass
+        if changed:
+            applied = self._reload_participation_policy()
+            note = "Config reloaded." if applied else "Update saved; reload may be required."
+            await interaction.followup.send(
+                f"{scope.title()} {status} for {mention}. (Current entries: {len(values)})\n{note}",
+                ephemeral=True,
+            )
+        else:
+            await interaction.followup.send(
+                f"No changes made. {mention} was already {status if enabled else 'removed'} for {scope}.",
+                ephemeral=True,
+            )
+
+    @app_commands.check(_admin_check)
+    @app_commands.command(name="llmbot_general", description="Enable or disable general chat participation in this channel")
+    @app_commands.describe(enabled="true to allow general chat responses, false to remove")
+    async def llmbot_general(self, interaction: discord.Interaction, enabled: bool):
+        await self._handle_general_toggle(interaction, enabled=enabled, override=False)
+
+    @app_commands.check(_admin_check)
+    @app_commands.command(name="llmbot_general_override", description="Force 100% general chat response chance in this channel")
+    @app_commands.describe(enabled="true to force response chance override, false to remove")
+    async def llmbot_general_override(self, interaction: discord.Interaction, enabled: bool):
+        await self._handle_general_toggle(interaction, enabled=enabled, override=True)
 
 
 async def setup(bot: commands.Bot):

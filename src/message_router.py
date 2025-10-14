@@ -501,6 +501,17 @@ class MessageRouter:
                     structured_msgs.append({"role": "assistant", "author": "bot", "content": parent_content, "timestamp_iso": None})
         except Exception:
             pass
+        # Avoid duplication: if the most recent structured entry matches the current user message, drop it
+        try:
+            if structured_msgs:
+                last = structured_msgs[-1]
+                if last.get("role") == "user":
+                    cur_author = event.get("author_name") or "user"
+                    cur_content = event.get("content") or ""
+                    if last.get("content") == cur_content and (last.get("author") == cur_author or not last.get("author")):
+                        structured_msgs.pop()
+        except Exception:
+            pass
         if use_tmpl:
             tail = structured_msgs[-keep_tail:] if keep_tail > 0 else []
             for m in tail:
@@ -1171,6 +1182,15 @@ class MessageRouter:
             })
         # History assembly (raw or template-tail)
         history: list[dict] = []
+        # Avoid duplication: remove current batch user message if it mirrors the last structured entry
+        try:
+            if structured:
+                last = structured[-1]
+                if last.get('role') == 'user':
+                    if (last.get('content') or '') == (batch_text or ''):
+                        structured = structured[:-1]
+        except Exception:
+            pass
         if use_tmpl:
             tail = structured[-keep_tail:] if keep_tail > 0 else []
             for m in tail:
