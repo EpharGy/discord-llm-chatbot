@@ -1391,6 +1391,16 @@ class MessageRouter:
                     )
                 except Exception:
                     pass
+        # If web context selected a provider name, apply provider-based NSFW default when not already True/forced
+        try:
+            if base_cf.get('web') and not base_cf.get('nsfw'):
+                prov = base_cf.get('provider_name')
+                if prov == 'openai':
+                    base_cf['nsfw'] = True
+                elif prov == 'openrouter':
+                    base_cf['nsfw'] = False
+        except Exception:
+            pass
         # Determine providers for this context if supported
         provider_indices = [0]
         try:
@@ -1424,8 +1434,18 @@ class MessageRouter:
                     continue
                 try:
                     start_ts = now_local()
+                    # Router-level start log: mask model name when using OpenAICompat provider for clarity
+                    disp_model = model_name
+                    try:
+                        if hasattr(self.llm, 'providers_for_context'):
+                            _plist = self.llm.providers_for_context(base_cf)  # type: ignore[attr-defined]
+                            if isinstance(_plist, list) and 0 <= p_index < len(_plist):
+                                if _plist[p_index].__class__.__name__ == 'OpenAICompatClient':
+                                    disp_model = 'openai-compat'
+                    except Exception:
+                        pass
                     # Demote router-level start; provider selector logs authoritative start with provider
-                    self.log.debug(f"[llm-start] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', model_name)} {fmt('nsfw', _nsfw_batch)} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
+                    self.log.debug(f"[llm-start] {fmt('channel', cid)} {fmt('user','batch')} {fmt('model', disp_model)} {fmt('nsfw', base_cf.get('nsfw'))} {fmt('fallback_index', idx)} {fmt('correlation', correlation_id)}")
                     cf_send = dict(base_cf)
                     cf_send['provider_index'] = p_index
                     result = await self.llm.generate_chat(

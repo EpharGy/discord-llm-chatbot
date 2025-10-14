@@ -29,6 +29,7 @@
   var LS_PROVIDER = 'webchat.provider';
   var LS_ROOM_ID = 'webchat.room_id';
   var LS_ROOM_PASS = 'webchat.room_passes';
+  var LS_FONT = 'webchat.font_size';
   var providerClasses = ['provider-openrouter', 'provider-openai'];
   var currentProviderTheme = null;
   var roomsById = {};
@@ -50,6 +51,7 @@
   var loreResetEl = $('loreReset');
   var nsfwSelectEl = $('nsfwOverride');
   var nsfwResetEl = $('nsfwReset');
+  var fontSizeEl = $('fontSize');
   var overrideState = { model: null, persona: null, lore: null, nsfw: null };
   var overrideDefaults = { model: null, persona: null, lore: [], nsfw: 'default' };
   var overrideOptions = { models: [], personas: [], lore: [] };
@@ -118,6 +120,18 @@
     controlsToggleEl.textContent = text;
     controlsToggleEl.classList.toggle('has-overrides', active.length > 0);
     if (controlsWrapperEl) controlsWrapperEl.classList.toggle('has-overrides', active.length > 0);
+  }
+  function applyFontSize(value){
+    var v = (value || '').trim();
+    if (!v) v = '1rem';
+    try {
+      document.documentElement.style.setProperty('--chat-font-size', v);
+      localStorage.setItem(LS_FONT, v);
+    } catch(_) {}
+  }
+  function handleFontSizeChange(){
+    if (!fontSizeEl) return;
+    applyFontSize(fontSizeEl.value || '1rem');
   }
   function applyControlsCollapsedState(){
     if (!controlsWrapperEl) return;
@@ -871,6 +885,22 @@
       nameEl.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); if (msgEl) msgEl.focus(); }});
       try { var savedName = localStorage.getItem(LS_NAME); if (savedName && !nameEl.value) nameEl.value = savedName; } catch(_) {}
       nameEl.addEventListener('change', function(){ try { if (nameEl.value) localStorage.setItem(LS_NAME, nameEl.value); else localStorage.removeItem(LS_NAME);} catch(_) {} });
+    }
+    if (fontSizeEl) {
+      try {
+        var savedFont = localStorage.getItem(LS_FONT);
+        if (savedFont) {
+          // Keep honoring previously saved values (even legacy ones like 0.9rem)
+          fontSizeEl.value = savedFont;
+          applyFontSize(savedFont);
+        } else {
+          // New default is the select's selected option (1.15rem)
+          applyFontSize(fontSizeEl.value || '1.15rem');
+        }
+      } catch(_) {
+        applyFontSize(fontSizeEl.value || '1.15rem');
+      }
+      fontSizeEl.addEventListener('change', handleFontSizeChange);
     }
     if (themeToggleEl) {
       themeToggleEl.addEventListener('click', function(){

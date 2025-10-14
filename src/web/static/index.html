@@ -11,6 +11,7 @@
     --space-2: 1rem;
     --maxw: 960px;
     --bot-accent: #1d4ed8;
+    --chat-font-size: 1rem; /* base font size for chat log and input */
     --log-bg: #ffffff;
     --log-border: #cccccc;
     --log-bg-dark: #12151b;
@@ -76,13 +77,13 @@
   #controls input { width: auto; }
   input::placeholder { color: #888; font-style: italic; }
   .dark input::placeholder { color: #9ca3af; }
-  #log { white-space: normal; border: 1px solid var(--log-border); padding: var(--space-2); overflow: auto; border-radius: 6px; background: var(--log-bg); min-height: 0; flex: 1 1 auto; transition: background-color 0.3s ease, border-color 0.3s ease; }
+  #log { white-space: normal; border: 1px solid var(--log-border); padding: var(--space-2); overflow: auto; border-radius: 6px; background: var(--log-bg); min-height: 0; flex: 1 1 auto; transition: background-color 0.3s ease, border-color 0.3s ease; font-size: var(--chat-font-size); }
     /* message bubbles */
     #log { display: flex; flex-direction: column; gap: 0.5rem; }
     .bubble { max-width: 85%; padding: 0.6rem 0.8rem; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); transition: background-color 0.3s ease, color 0.3s ease; }
     .bubble.bot { background: var(--bot-bubble-bg); color: #111; margin-right: auto; }
   .bubble.user { background: var(--user-bubble-bg, #e8f0fe); color: #111; margin-left: auto; }
-    .bubble .author { font-weight: 700; margin-bottom: 0.25rem; font-size: 0.95rem; }
+  .bubble .author { font-weight: 700; margin-bottom: 0.25rem; font-size: calc(var(--chat-font-size) * 0.95); }
     .bubble.bot .author { color: var(--bot-accent); }
   .bubble.user .author { color: var(--user-author-color, #065f46); }
     .bubble .content p { margin: 0.25rem 0; }
@@ -100,7 +101,7 @@
     .msg { margin-bottom: 0.75rem; }
     .author { font-weight: 600; margin-bottom: 0.25rem; }
     .content { white-space: normal; }
-    #msg { width: 100%; resize: none; min-height: 2.4rem; max-height: 8rem; padding: 0.5rem 0.75rem; }
+  #msg { width: 100%; resize: none; min-height: 2.4rem; max-height: 8rem; padding: 0.5rem 0.75rem; font-size: var(--chat-font-size); }
     #input-row { display: flex; gap: var(--space-1); align-items: stretch; margin-bottom: var(--space-1); }
     #input-row .btns { display: flex; gap: var(--space-1); }
     input, button, textarea { font-size: 1rem; padding: 0.5rem 0.75rem; }
@@ -187,6 +188,13 @@
       <input id="name" placeholder="You">
       <label for="provider">Provider:</label>
       <select id="provider"></select>
+      <label for="fontSize">Font:</label>
+      <select id="fontSize">
+        <option value="1rem">Small</option>
+        <option value="1.15rem" selected>Default</option>
+        <option value="1.3rem">Large</option>
+        <option value="1.5rem">XL</option>
+      </select>
       <input id="token" type="password" placeholder="API token (if required)">
       <button id="resetBtn" type="button">Reset History</button>
     </div>
@@ -231,6 +239,6 @@
   </div>
   <button id="jumpBtn" type="button">Jump to latest</button>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/static/app.js?v=9"></script>
+  <script src="/static/app.js?v=11"></script>
 </body>
 </html>

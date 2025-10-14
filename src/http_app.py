@@ -558,7 +558,10 @@ def create_app() -> FastAPI:
                     allow_nsfw = bool(cfg.participation().get("allow_nsfw", True))
                 except Exception:
                     allow_nsfw = True
-                if allow_nsfw and provider_lower == "openrouter":
+                # Web default: provider determines NSFW when not overridden
+                # - openai (OpenAI-compatible local backends): NSFW = True
+                # - openrouter (cloud): NSFW = False
+                if allow_nsfw and provider_lower == "openai":
                     channel_nsfw = True
             channel_obj = SimpleNamespace(id=ch_id, name="web-room", nsfw=channel_nsfw, parent=None)
             # Tag web context for provider selection
