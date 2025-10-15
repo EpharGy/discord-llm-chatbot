@@ -31,6 +31,9 @@
   .controls-wrapper { display: flex; flex-direction: column; gap: var(--space-1); }
   .controls-wrapper.collapsed { display: none; }
   #room-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
+  .ml-auto { margin-left: auto; }
+  .room-right { display: flex; align-items: center; gap: var(--space-1); }
+  .room-right label { font-weight: 600; }
   /* New grid layout for main controls */
   #controls.controls-grid { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: var(--space-1); align-items: center; }
   #controls .form-field { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
@@ -38,10 +41,13 @@
   #controls .form-field > input, #controls .form-field > select { width: 100%; }
   #controls .actions { display: contents; }
   #controls .align-end { justify-self: end; }
-  #overrideControls { display: flex; flex-direction: column; gap: 0.6rem; }
-  .override-grid { display: grid; grid-template-columns: repeat(2, minmax(220px, 1fr)); gap: var(--space-1); }
+  /* Let the layout class (.override-grid) control display; only keep spacing here */
+  #overrideControls { gap: 0.6rem; }
+  .override-grid { display: grid; grid-template-columns: repeat(2, minmax(220px, 1fr)); gap: var(--space-1); grid-auto-flow: dense; }
   .override-grid .override-row { display: flex; align-items: center; gap: 0.5rem; }
   .override-grid .full-row { grid-column: 1 / -1; }
+  .override-grid .left-col { grid-column: 1; }
+  .override-grid .right-col { grid-column: 2; }
   .override-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
   .override-row label { font-weight: 600; min-width: 4.5rem; }
   .override-reset { border: 1px solid var(--log-border); background: transparent; color: inherit; padding: 0.35rem 0.75rem; border-radius: 999px; font-size: 0.85rem; cursor: pointer; transition: background 0.2s ease, color 0.2s ease; }
@@ -170,8 +176,10 @@
       .controls-wrapper { border: 1px solid var(--log-border); border-radius: 12px; padding: 0.75rem; background: rgba(255,255,255,0.95); box-shadow: 0 8px 24px rgba(15,23,42,0.15); }
       .dark .controls-wrapper { border-color: var(--log-border-dark); background: rgba(15,17,21,0.95); }
       .controls-wrapper.collapsed { display: none; }
-  #room-controls, #overrideControls { flex-direction: column; align-items: stretch; }
-  #controls.controls-grid { display: flex; flex-direction: column; }
+    #room-controls, #overrideControls { flex-direction: column; align-items: stretch; }
+    #room-controls .room-right { margin-left: 0; flex-wrap: wrap; }
+    #controls.controls-grid { display: flex; flex-direction: column; }
+    #overrideControls.override-grid { display: flex; flex-direction: column; }
   #room-controls select, #controls select, #controls input, #overrideControls select { min-width: 100%; max-width: 100%; }
       #input-row { flex-direction: column; }
       #input-row .btns button { flex: 1 1 0; }
@@ -192,6 +200,11 @@
       <label for="roomSelect">Room:</label>
       <select id="roomSelect"></select>
       <button id="deleteRoomBtn" type="button" class="danger-btn">Delete Room</button>
+      <div class="room-right ml-auto">
+        <label for="token">Token:</label>
+        <input id="token" type="password" placeholder="API token (if required)">
+        <button id="resetBtn" type="button">Reset History</button>
+      </div>
     </div>
     <div id="controls" class="controls-grid">
       <div class="form-field"><button id="themeToggle" type="button">Theme</button></div>
@@ -205,29 +218,14 @@
           <option value="1.5rem">XL</option>
         </select>
       </div>
-      <div class="form-field"><label for="token">Token:</label><input id="token" type="password" placeholder="API token (if required)"></div>
-      <div class="actions align-end"><button id="resetBtn" type="button">Reset History</button></div>
     </div>
     <div id="overrideControls" class="override-controls override-grid">
-      <div class="override-row">
+      <div class="override-row left-col">
         <label for="modelOverride">Model:</label>
         <select id="modelOverride"></select>
         <button id="modelReset" type="button" class="override-reset">Reset</button>
       </div>
-      <div class="override-row">
-        <label for="personaOverride">Persona:</label>
-        <select id="personaOverride"></select>
-        <button id="personaReset" type="button" class="override-reset">Reset</button>
-      </div>
-      <div class="override-row full-row">
-        <label for="loreOverride">Lore:</label>
-        <div class="override-multiselect">
-          <select id="loreOverride" multiple size="4"></select>
-          <span class="override-hint">Hold Ctrl (or Cmd) to select multiple lore files.</span>
-        </div>
-        <button id="loreReset" type="button" class="override-reset">Reset</button>
-      </div>
-      <div class="override-row">
+      <div class="override-row right-col">
         <label for="nsfwOverride">NSFW:</label>
         <select id="nsfwOverride">
           <option value="default">Use channel default</option>
@@ -235,6 +233,19 @@
           <option value="force_off">Force NSFW Off</option>
         </select>
         <button id="nsfwReset" type="button" class="override-reset">Reset</button>
+      </div>
+      <div class="override-row left-col">
+        <label for="personaOverride">Persona:</label>
+        <select id="personaOverride"></select>
+        <button id="personaReset" type="button" class="override-reset">Reset</button>
+      </div>
+      <div class="override-row right-col">
+        <label for="loreOverride">Lore:</label>
+        <div class="override-multiselect">
+          <select id="loreOverride" multiple size="4"></select>
+          <span class="override-hint">Hold Ctrl (or Cmd) to select multiple lore files.</span>
+        </div>
+        <button id="loreReset" type="button" class="override-reset">Reset</button>
       </div>
     </div>
   </div>
@@ -249,6 +260,6 @@
   </div>
   <button id="jumpBtn" type="button">Jump to latest</button>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/static/app.js?v=11"></script>
+  <script src="/static/app.js?v=12"></script>
 </body>
 </html>
