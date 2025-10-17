@@ -16,6 +16,7 @@ from .llm.openai_compat_client import OpenAICompatClient
 from .llm.multi_backend_client import ContextualMultiBackendClient
 from .conversation_batcher import ConversationBatcher
 from .lore_service import LoreService
+from .llm.openrouter_catalog import startup_refresh_catalog
 
 
 async def main() -> None:
@@ -44,6 +45,13 @@ async def main() -> None:
         error_file=config.log_errors(),
     )
     logger = get_logger("bot_app")
+
+    # Fetch OpenRouter model catalog at startup (best-effort)
+    try:
+        startup_refresh_catalog()
+        logger.debug("openrouter-catalog: refreshed at startup")
+    except Exception:
+        pass
 
     # Core services
     persona = PersonaService(config.persona_path())

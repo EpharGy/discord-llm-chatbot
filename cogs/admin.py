@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -7,6 +8,7 @@ from discord.ext import commands
 from src.config_service import ConfigService
 from src.logger_factory import set_log_levels, get_logger
 from src.participation_policy import ParticipationPolicy
+from src.llm.openrouter_catalog import get_catalog, startup_refresh_catalog, ModelInfo
 import yaml as _pyyaml
 
 log = get_logger("Cog.Admin")
@@ -106,6 +108,11 @@ class AdminCog(commands.Cog):
             level = cfg.log_level()
             lib = cfg.lib_log_level()
             set_log_levels(level=level, lib_log_level=lib)
+            # Refresh OpenRouter catalog as part of restart
+            try:
+                startup_refresh_catalog()
+            except Exception:
+                pass
             await interaction.followup.send("Config reloaded and logging updated.", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"Reload failed: {e}", ephemeral=True)
@@ -252,6 +259,250 @@ class AdminCog(commands.Cog):
     @app_commands.describe(enabled="true to force response chance override, false to remove")
     async def llmbot_general_override(self, interaction: discord.Interaction, enabled: bool):
         await self._handle_general_toggle(interaction, enabled=enabled, override=True)
+
+    # --- Model management helpers ---
+    def _hot_apply_model_cfg(self) -> bool:
+        router = getattr(self.bot, "router", None)
+        if router is None:
+            return False
+        try:
+            cfg = ConfigService("config.yaml")
+            router.model_cfg = cfg.model()
+            return True
+        except Exception as exc:
+            log.error(f"model-hot-apply-failed {exc}")
+            return False
+
+    def _format_price(self, v: float | None) -> str:
+        try:
+            return f"${v:.2f}/M" if v is not None else "n/a"
+        except Exception:
+            return "n/a"
+
+    # Note: intentionally no admin check here so non-admins can view the list.
+    @app_commands.command(name="llmbot_model_order", description="Show configured models (admins can move one to top)")
+    @app_commands.choices(scope=[
+        app_commands.Choice(name="normal", value="normal"),
+        app_commands.Choice(name="vision", value="vision"),
+    ])
+    async def llmbot_model_order(self, interaction: discord.Interaction, scope: app_commands.Choice[str]):
+        # Usage log
+        try:
+            uname = getattr(interaction.user, "display_name", None) or getattr(interaction.user, "name", "user")
+            log.info(f"[Discord] {uname} used /llmbot_model_order scope={scope.value}")
+        except Exception:
+            pass
+        try:
+            await interaction.response.defer(ephemeral=False)
+        except Exception:
+            pass
+        cfg = ConfigService("config.yaml")
+        scope_key = scope.value
+        if scope_key == "vision":
+            try:
+                models = (cfg.model().get("vision") or {}).get("models") or []
+            except Exception:
+                models = []
+        else:
+            models = cfg.model().get("models") or []
+        if isinstance(models, str):
+            models = [m.strip() for m in models.split(",") if m.strip()]
+        models = [str(m) for m in models]
+        cat = get_catalog()
+        lines = []
+        for i, slug in enumerate(models, start=1):
+            info = cat.get(slug)
+            ctx = info.context_length if info and info.context_length else "n/a"
+            pp = self._format_price(info.prompt_per_million if info else None)
+            cp = self._format_price(info.completion_per_million if info else None)
+            # vision=True means supports image input (not image generation)
+            vis = " 📷" if (info and info.vision) else ""
+            hint = slug.split("/")[-1]
+            lines.append(f"[{i}] {hint} — {slug} — ctx {ctx}, prompt {pp}, completion {cp}{vis}")
+        if not lines:
+            lines.append("(No models configured)")
+        is_admin = _is_admin(interaction.user)
+        if is_admin:
+            lines.append("")
+            if scope_key == "vision":
+                lines.append("Reply with Model # (within 45s) to move that model to position 1 in the VISION list.")
+            else:
+                lines.append("Reply with Model # (within 45s) to move that model to position 1 in the NORMAL list.")
+        content = "\n".join(lines)
+        try:
+            await interaction.followup.send(content, ephemeral=False)
+        except Exception:
+            try:
+                await interaction.followup.send(content)
+            except Exception:
+                return
+        # For non-admins, we're done after showing the list
+        if not is_admin:
+            return
+        # Admin path: wait for a reply from the same user in the same channel
+        try:
+            def check(m: discord.Message):
+                ch_ok = True
+                try:
+                    ch_ok = (m.channel.id == getattr(interaction, 'channel_id', getattr(interaction.channel, 'id', None)))
+                except Exception:
+                    pass
+                return (m.author.id == interaction.user.id) and ch_ok
+            msg = await self.bot.wait_for("message", timeout=45.0, check=check)
+            choice_raw = (msg.content or "").strip()
+            try:
+                idx = int(choice_raw)
+            except Exception:
+                await interaction.followup.send("Not a number. Use /llmbot_model_add to add a new model by id.", ephemeral=True)
+                return
+            if idx < 1 or idx > len(models):
+                await interaction.followup.send("Index out of range.", ephemeral=True)
+                return
+            sel = models[idx - 1]
+            new_list = [sel] + [m for m in models if m != sel]
+            data = self._read_config("config.yaml")
+            node = data.setdefault("model", {})
+            if scope_key == "vision":
+                v = node.setdefault("vision", {})
+                v["models"] = new_list
+            else:
+                node["models"] = new_list
+            self._write_config("config.yaml", data)
+            self._hot_apply_model_cfg()
+            try:
+                uname = getattr(interaction.user, "display_name", None) or getattr(interaction.user, "name", "user")
+                log.info(f"[models-reorder] user={uname} scope={scope_key} moved_to_top={sel}")
+            except Exception:
+                pass
+            await interaction.followup.send(f"Moved to top: {sel}", ephemeral=True)
+        except asyncio.TimeoutError:
+            try:
+                await interaction.followup.send("Timed out. Run /llmbot_model_order again when ready.", ephemeral=True)
+            except Exception:
+                pass
+
+        
+    @app_commands.check(_admin_check)
+    @app_commands.command(name="llmbot_model_add", description="Search OpenRouter catalog and add a model to top of rotation")
+    @app_commands.choices(scope=[
+        app_commands.Choice(name="normal", value="normal"),
+        app_commands.Choice(name="vision", value="vision"),
+    ])
+    @app_commands.describe(query="Space-separated search terms matched against full model id (AND search)")
+    async def llmbot_model_add(self, interaction: discord.Interaction, scope: app_commands.Choice[str], query: str):
+        # Usage log
+        try:
+            uname = getattr(interaction.user, "display_name", None) or getattr(interaction.user, "name", "user")
+            log.info(f"[Discord] {uname} used /llmbot_model_add scope={scope.value} query=\"{(query or '').strip()}\"")
+        except Exception:
+            pass
+        # Non-ephemeral so the admin can send a number as a normal message in-channel
+        try:
+            await interaction.response.defer(ephemeral=False)
+        except Exception:
+            pass
+        terms = [t.strip().lower() for t in (query or "").split() if t.strip()]
+        if not terms:
+            await interaction.followup.send("Provide at least one search term.")
+            return
+        cat = get_catalog()
+        models_map = cat.list()
+        scope_key = scope.value
+        # Build candidate list with optional vision pre-filter
+        cand = []
+        for slug, info in models_map.items():
+            if scope_key == "vision" and not info.vision:
+                continue
+            s = slug.lower()
+            if all(t in s for t in terms):
+                cand.append((slug, info))
+        if not cand:
+            await interaction.followup.send("No matches.")
+            return
+        # Sort: newest release first, then cheaper prompt price, then completion, then slug
+        def _price_key(mi: ModelInfo | None):
+            p = mi.prompt_per_million if mi else None
+            c = mi.completion_per_million if mi else None
+            # Treat None as very large to push to the end
+            return (
+                1e12 if p is None else float(p),
+                1e12 if c is None else float(c),
+            )
+        def _release_key(mi: ModelInfo | None):
+            r = mi.released_at if mi else None
+            return -(r if isinstance(r, (int, float)) else -1)  # None -> bottom
+        cand.sort(key=lambda x: (_release_key(x[1]), _price_key(x[1]), x[0]))
+        # Prepare output with a safe cap for Discord 2k limit
+        lines = []
+        max_items = 20
+        for i, (slug, info) in enumerate(cand[:max_items], start=1):
+            ctx = info.context_length if info and info.context_length else "n/a"
+            pp = self._format_price(info.prompt_per_million if info else None)
+            cp = self._format_price(info.completion_per_million if info else None)
+            vis = " 📷" if (info and info.vision) else ""
+            hint = slug.split("/")[-1]
+            lines.append(f"[{i}] {hint} — {slug} — ctx {ctx}, prompt {pp}, completion {cp}{vis}")
+        if len(cand) > max_items:
+            lines.append(f"… and {len(cand) - max_items} more")
+        lines.append("")
+        lines.append("Send the Model # as a normal message in this channel within 45s to add it to the top.")
+        out = "\n".join(lines)
+        try:
+            await interaction.followup.send(out)
+        except Exception:
+            # If too long, trim to first 10
+            lines = lines[:12]
+            await interaction.followup.send("\n".join(lines))
+        # Wait for admin reply with index
+        try:
+            def check(m: discord.Message):
+                ch_ok = True
+                try:
+                    ch_ok = (m.channel.id == getattr(interaction, 'channel_id', getattr(interaction.channel, 'id', None)))
+                except Exception:
+                    pass
+                return (m.author.id == interaction.user.id) and ch_ok
+            msg = await self.bot.wait_for("message", timeout=45.0, check=check)
+            choice_raw = (msg.content or "").strip()
+            try:
+                idx = int(choice_raw)
+            except Exception:
+                await interaction.followup.send("Not a number. Aborted.")
+                return
+            if idx < 1 or idx > min(max_items, len(cand)):
+                await interaction.followup.send("Index out of range.")
+                return
+            slug = cand[idx - 1][0]
+            data = self._read_config("config.yaml")
+            node = data.setdefault("model", {})
+            if scope_key == "vision":
+                v = node.setdefault("vision", {})
+                current = v.get("models") or []
+                if isinstance(current, str):
+                    current = [m.strip() for m in current.split(",") if m.strip()]
+                current = [str(m) for m in current]
+                new_list = [slug] + [m for m in current if m != slug]
+                v["models"] = new_list
+            else:
+                current = node.get("models") or []
+                if isinstance(current, str):
+                    current = [m.strip() for m in current.split(",") if m.strip()]
+                current = [str(m) for m in current]
+                new_list = [slug] + [m for m in current if m != slug]
+                node["models"] = new_list
+            self._write_config("config.yaml", data)
+            self._hot_apply_model_cfg()
+            try:
+                uname = getattr(interaction.user, "display_name", None) or getattr(interaction.user, "name", "user")
+                log.info(f"[models-add] user={uname} scope={scope_key} added_to_top={slug}")
+            except Exception:
+                pass
+            await interaction.followup.send(f"Added to top: {slug}")
+        except asyncio.TimeoutError:
+            try:
+                await interaction.followup.send("Timed out. Run the command again when ready.")
+            except Exception:
+                pass
 
 
 async def setup(bot: commands.Bot):
