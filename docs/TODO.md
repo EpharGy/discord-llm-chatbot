@@ -165,3 +165,8 @@ Goal: Collect and log basic usage statistics to help understand how the bot is b
 - [ ] cog & /command usage to see what is being used.
 - [ ] Log stats in a lightweight db (e.g., SQLite)
 - [ ] expose stats via a /stats endpoint (admin only), create a simple HTML page with basic stat views.
+
+## Weather Interesting Fact improvement (prevent re-using same fact)
+
+- [ ] Store random fact about the searched location and insert into prompt for subsequent weather requests for that location to negative steer LLM into providing a different fact.
+  - [ ] will need to store last say 5 facts for each location, drop oldest when adding a new one beyond 5.
