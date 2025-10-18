@@ -8,7 +8,7 @@ from discord.ext import commands
 from src.config_service import ConfigService
 from src.logger_factory import set_log_levels, get_logger
 from src.participation_policy import ParticipationPolicy
-from src.llm.openrouter_catalog import get_catalog, startup_refresh_catalog, ModelInfo
+from src.llm.openrouter_catalog import get_catalog, refresh_catalog_with_logging, ModelInfo
 import yaml as _pyyaml
 
 log = get_logger("Cog.Admin")
@@ -110,7 +110,7 @@ class AdminCog(commands.Cog):
             set_log_levels(level=level, lib_log_level=lib)
             # Refresh OpenRouter catalog as part of restart
             try:
-                startup_refresh_catalog()
+                refresh_catalog_with_logging(log, context="/llmbot_restart")
             except Exception:
                 pass
             await interaction.followup.send("Config reloaded and logging updated.", ephemeral=True)
@@ -275,7 +275,11 @@ class AdminCog(commands.Cog):
 
     def _format_price(self, v: float | None) -> str:
         try:
-            return f"${v:.2f}/M" if v is not None else "n/a"
+            if v is None:
+                return "n/a"
+            # OpenRouter pricing appears to be USD per token in cache; scale to per-million for display
+            per_million = float(v) * 1_000_000.0
+            return f"${per_million:.2f}/M"
         except Exception:
             return "n/a"
 

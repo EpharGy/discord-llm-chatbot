@@ -64,6 +64,7 @@ class OpenRouterCatalog:
                     "completion_per_million": v.completion_per_million,
                     "context_length": v.context_length,
                     "vision": v.vision,
+                    "released_at": v.released_at,
                 }
                 for k, v in self.models.items()
             }
@@ -225,10 +226,28 @@ def get_catalog() -> OpenRouterCatalog:
     return _CATALOG
 
 
-def startup_refresh_catalog() -> None:
+def refresh_catalog_with_logging(logger=None, *, context: str = "startup") -> bool:
+    """Refresh the catalog and log a consistent message.
+
+    - logger: any object with .info/.warning (e.g., our repo logger). If None, no logs.
+    - context: short string to indicate callsite (e.g., "startup", "/llmbot_restart").
+    Returns True on network refresh success, False otherwise.
+    """
     cat = get_catalog()
-    # Try network; on failure, keep any cached data
     try:
-        cat.refresh_from_network()
-    except Exception:
-        pass
+        ok = bool(cat.refresh_from_network())
+        if logger is not None:
+            if ok:
+                logger.info(f"openrouter-catalog: fetched and cached ({context})")
+            else:
+                logger.warning(f"openrouter-catalog: network refresh failed ({context}); using cached (if any)")
+        return ok
+    except Exception as e:
+        if logger is not None:
+            logger.warning(f"openrouter-catalog: refresh exception ({context}): {e}")
+        return False
+
+
+# Back-compat shim used by older callsites
+def startup_refresh_catalog() -> bool:
+    return refresh_catalog_with_logging(None, context="startup")

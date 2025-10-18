@@ -16,7 +16,7 @@ from .llm.openai_compat_client import OpenAICompatClient
 from .llm.multi_backend_client import ContextualMultiBackendClient
 from .conversation_batcher import ConversationBatcher
 from .lore_service import LoreService
-from .llm.openrouter_catalog import startup_refresh_catalog
+from .llm.openrouter_catalog import refresh_catalog_with_logging
 
 
 async def main() -> None:
@@ -48,8 +48,7 @@ async def main() -> None:
 
     # Fetch OpenRouter model catalog at startup (best-effort)
     try:
-        startup_refresh_catalog()
-        logger.debug("openrouter-catalog: refreshed at startup")
+        refresh_catalog_with_logging(logger, context="startup")
     except Exception:
         pass
 
