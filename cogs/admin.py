@@ -283,6 +283,19 @@ class AdminCog(commands.Cog):
         except Exception:
             return "n/a"
 
+    def _format_ctx(self, v: int | str | None) -> str:
+        try:
+            if v is None:
+                return "n/a"
+            n = int(v)
+            if n >= 1_000_000:
+                return f"{int(round(n/1_000_000))}M"
+            if n >= 1_000:
+                return f"{int(round(n/1_000))}K"
+            return str(n)
+        except Exception:
+            return "n/a"
+
     # Note: intentionally no admin check here so non-admins can view the list.
     @app_commands.command(name="llmbot_model_order", description="Show configured models (admins can move one to top)")
     @app_commands.choices(scope=[
@@ -316,7 +329,8 @@ class AdminCog(commands.Cog):
         lines = []
         for i, slug in enumerate(models, start=1):
             info = cat.get(slug)
-            ctx = info.context_length if info and info.context_length else "n/a"
+            ctx_raw = info.context_length if info and info.context_length else None
+            ctx = self._format_ctx(ctx_raw)
             pp = self._format_price(info.prompt_per_million if info else None)
             cp = self._format_price(info.completion_per_million if info else None)
             # vision=True means supports image input (not image generation)
@@ -329,15 +343,17 @@ class AdminCog(commands.Cog):
         if is_admin:
             lines.append("")
             if scope_key == "vision":
-                lines.append("Reply with Model # (within 45s) to move that model to position 1 in the VISION list.")
+                lines.append("Reply to this message with the Model # (within 45s) to move it to position 1 in the VISION list.")
             else:
-                lines.append("Reply with Model # (within 45s) to move that model to position 1 in the NORMAL list.")
+                lines.append("Reply to this message with the Model # (within 45s) to move it to position 1 in the NORMAL list.")
         content = "\n".join(lines)
+        # Send and capture the message for reply checking
+        out_msg = None
         try:
-            await interaction.followup.send(content, ephemeral=False)
+            out_msg = await interaction.followup.send(content, ephemeral=False)
         except Exception:
             try:
-                await interaction.followup.send(content)
+                out_msg = await interaction.followup.send(content)
             except Exception:
                 return
         # For non-admins, we're done after showing the list
@@ -346,12 +362,19 @@ class AdminCog(commands.Cog):
         # Admin path: wait for a reply from the same user in the same channel
         try:
             def check(m: discord.Message):
-                ch_ok = True
-                try:
-                    ch_ok = (m.channel.id == getattr(interaction, 'channel_id', getattr(interaction.channel, 'id', None)))
-                except Exception:
-                    pass
-                return (m.author.id == interaction.user.id) and ch_ok
+                if m.author.id != interaction.user.id:
+                    return False
+                # Require a message reply to our bot message
+                ref = getattr(m, 'reference', None)
+                replied_id = getattr(ref, 'message_id', None) if ref else None
+                if replied_id is None and ref and getattr(ref, 'cached_message', None):
+                    try:
+                        replied_id = ref.cached_message.id
+                    except Exception:
+                        replied_id = None
+                if not out_msg or replied_id != getattr(out_msg, 'id', None):
+                    return False
+                return True
             msg = await self.bot.wait_for("message", timeout=45.0, check=check)
             choice_raw = (msg.content or "").strip()
             try:
@@ -440,7 +463,8 @@ class AdminCog(commands.Cog):
         lines = []
         max_items = 20
         for i, (slug, info) in enumerate(cand[:max_items], start=1):
-            ctx = info.context_length if info and info.context_length else "n/a"
+            ctx_raw = info.context_length if info and info.context_length else None
+            ctx = self._format_ctx(ctx_raw)
             pp = self._format_price(info.prompt_per_million if info else None)
             cp = self._format_price(info.completion_per_million if info else None)
             vis = " 📷" if (info and info.vision) else ""
@@ -449,23 +473,32 @@ class AdminCog(commands.Cog):
         if len(cand) > max_items:
             lines.append(f"… and {len(cand) - max_items} more")
         lines.append("")
-        lines.append("Send the Model # as a normal message in this channel within 45s to add it to the top.")
+        lines.append("Reply to this message with the Model # (within 45s) to add it to the top.")
         out = "\n".join(lines)
+        # Send and capture message for reply checking
+        add_msg = None
         try:
-            await interaction.followup.send(out)
+            add_msg = await interaction.followup.send(out)
         except Exception:
-            # If too long, trim to first 10
+            # If too long, trim to first 10 and resend
             lines = lines[:12]
-            await interaction.followup.send("\n".join(lines))
+            add_msg = await interaction.followup.send("\n".join(lines))
         # Wait for admin reply with index
         try:
             def check(m: discord.Message):
-                ch_ok = True
-                try:
-                    ch_ok = (m.channel.id == getattr(interaction, 'channel_id', getattr(interaction.channel, 'id', None)))
-                except Exception:
-                    pass
-                return (m.author.id == interaction.user.id) and ch_ok
+                if m.author.id != interaction.user.id:
+                    return False
+                # Require reply to our add message
+                ref = getattr(m, 'reference', None)
+                replied_id = getattr(ref, 'message_id', None) if ref else None
+                if replied_id is None and ref and getattr(ref, 'cached_message', None):
+                    try:
+                        replied_id = ref.cached_message.id
+                    except Exception:
+                        replied_id = None
+                if not add_msg or replied_id != getattr(add_msg, 'id', None):
+                    return False
+                return True
             msg = await self.bot.wait_for("message", timeout=45.0, check=check)
             choice_raw = (msg.content or "").strip()
             try:
