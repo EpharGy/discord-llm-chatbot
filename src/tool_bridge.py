@@ -87,26 +87,52 @@ class ToolBridge:
         correlation_id = f"{channel_id}-tool-{tool_name}-{int(now_local().timestamp()*1000)}"
         reply = None
         model_used = None
-        for idx, model_name in enumerate(models_to_try):
-            if not model_name:
-                continue
+        # Determine providers for this context and apply single-probe rule for OpenAI-compat
+        provider_indices = [0]
+        providers_list = None
+        base_cf = {"channel": channel_id, "user": "tool", "correlation": correlation_id, "nsfw": is_nsfw, "has_images": False}
+        try:
+            if hasattr(self.router.llm, 'providers_for_context'):
+                providers_list = self.router.llm.providers_for_context(base_cf)  # type: ignore[attr-defined]
+                if isinstance(providers_list, list) and len(providers_list) > 1:
+                    provider_indices = list(range(len(providers_list)))
+        except Exception:
+            providers_list = None
+
+        for p_index in provider_indices:
             try:
-                self.log.info(f"[tool-llm-start] channel={channel_id} tool={tool_name} model={model_name} fallback_index={idx} correlation={correlation_id}")
-                result = await self.router.llm.generate_chat(
-                    messages,
-                    max_tokens=max_tokens,
-                    model=model_name,
-                    temperature=temp,
-                    top_p=self.router.model_cfg.get("top_p"),
-                    stop=stops,
-                    context_fields={"channel": channel_id, "user": "tool", "correlation": correlation_id, "nsfw": is_nsfw, "has_images": False},
-                )
-                reply = result.get("text") if isinstance(result, dict) else result
-                model_used = model_name
-                self.log.info(f"[tool-llm-finish] channel={channel_id} tool={tool_name} model={model_name} correlation={correlation_id}")
+                p_cls = None
+                if isinstance(providers_list, list) and 0 <= p_index < len(providers_list):
+                    p_cls = providers_list[p_index].__class__.__name__
+                is_openai_compat = (p_cls == 'OpenAICompatClient')
+            except Exception:
+                is_openai_compat = False
+
+            model_iter = models_to_try[:1] if is_openai_compat else models_to_try
+            for idx, model_name in enumerate(model_iter):
+                if not model_name:
+                    continue
+                try:
+                    self.log.info(f"[tool-llm-start] channel={channel_id} tool={tool_name} model={model_name} fallback_index={idx} correlation={correlation_id}")
+                    cf = dict(base_cf)
+                    cf['provider_index'] = p_index
+                    result = await self.router.llm.generate_chat(
+                        messages,
+                        max_tokens=max_tokens,
+                        model=model_name,
+                        temperature=temp,
+                        top_p=self.router.model_cfg.get("top_p"),
+                        stop=stops,
+                        context_fields=cf,
+                    )
+                    reply = result.get("text") if isinstance(result, dict) else result
+                    model_used = model_name
+                    self.log.info(f"[tool-llm-finish] channel={channel_id} tool={tool_name} model={model_name} correlation={correlation_id}")
+                    break
+                except Exception as e:
+                    self.log.error(f"tool-llm-error model={model_name} tool={tool_name} err={e}")
+            if reply:
                 break
-            except Exception as e:
-                self.log.error(f"tool-llm-error model={model_name} tool={tool_name} err={e}")
 
         if reply is None and allow_auto:
             try:
@@ -117,7 +143,8 @@ class ToolBridge:
                     temperature=temp,
                     top_p=self.router.model_cfg.get("top_p"),
                     stop=stops,
-                    context_fields={"channel": channel_id, "user": "tool", "correlation": correlation_id, "nsfw": is_nsfw, "has_images": False},
+                    # Mark web True to bias provider selection toward OpenRouter path when applicable
+                    context_fields={"channel": channel_id, "user": "tool", "correlation": correlation_id, "nsfw": is_nsfw, "has_images": False, "web": True},
                 )
                 reply = result.get("text") if isinstance(result, dict) else result
                 model_used = "openrouter/auto"
