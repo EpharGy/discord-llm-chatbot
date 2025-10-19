@@ -740,8 +740,26 @@ class MessageRouter:
             except Exception:
                 pass
 
+            # Pre-fetch provider list for class inspection (to special-case openai-compat once)
+            _providers_list = None
+            try:
+                if hasattr(self.llm, 'providers_for_context'):
+                    _providers_list = self.llm.providers_for_context(base_cf)  # type: ignore[attr-defined]
+            except Exception:
+                _providers_list = None
+
             for p_index in provider_indices:
-                for idx, model_name in enumerate(models_to_try):
+                # Determine if current provider is OpenAI-compatible; if so, try only the first model once
+                try:
+                    p_cls = None
+                    if isinstance(_providers_list, list) and 0 <= p_index < len(_providers_list):
+                        p_cls = _providers_list[p_index].__class__.__name__
+                    is_openai_compat = (p_cls == 'OpenAICompatClient')
+                except Exception:
+                    is_openai_compat = False
+
+                _model_iter = models_to_try[:1] if is_openai_compat else models_to_try
+                for idx, model_name in enumerate(_model_iter):
                     if not model_name:
                         continue
                     start_ts = now_local()
