@@ -9,6 +9,7 @@ from src.config_service import ConfigService
 from src.logger_factory import set_log_levels, get_logger
 from src.participation_policy import ParticipationPolicy
 from src.llm.openrouter_catalog import get_catalog, refresh_catalog_with_logging, ModelInfo
+from src.utils.time_utils import now_local
 import yaml as _pyyaml
 
 log = get_logger("Cog.Admin")
@@ -541,8 +542,7 @@ class AdminCog(commands.Cog):
             try:
                 await interaction.followup.send("Timed out. Run the command again when ready.")
             except Exception:
-                pass
-
+                pass   
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AdminCog(bot))

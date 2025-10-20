@@ -585,6 +585,18 @@ class MessageRouter:
         except Exception:
             pass
 
+        # When web search is requested, add a small style contract to reinforce persona voice
+        try:
+            if bool(event.get('web')):
+                style_block = (
+                    "You must present the final answer in the assistant's established persona voice and tone.\n"
+                    "Guidelines: be concise and focused on the user's latest request; include citations (source names/links) when they are present;\n"
+                    "avoid boilerplate or generic disclaimers unless essential; do not ask follow-up questions."
+                )
+                messages_for_est.append({"role": "system", "content": style_block})
+        except Exception:
+            pass
+
         # If using template, render a context block and attach as an extra system message (after lore)
         if use_tmpl:
             context_block = self.tmpl.render(conversation_window=structured_msgs, user_input=event['content'], summary=None)
@@ -684,7 +696,15 @@ class MessageRouter:
         if self.llm is not None:
             models_to_try: list[str] = []
             or_cfg = (self.model_cfg.get("openrouter") or {}) if isinstance(self.model_cfg, dict) else {}
-            cfg_models = or_cfg.get("models")
+            # Prefer web models when the event requests web search
+            cfg_models = None
+            try:
+                if bool(event.get('web')):
+                    cfg_models = (or_cfg.get('web') or {}).get('models') or None
+            except Exception:
+                cfg_models = None
+            if cfg_models is None:
+                cfg_models = or_cfg.get("models")
             if isinstance(cfg_models, str):
                 models_to_try = [m.strip() for m in cfg_models.split(",") if m.strip()]
             elif isinstance(cfg_models, list):
@@ -1325,6 +1345,14 @@ class MessageRouter:
                     system_blocks.append({'role': 'system', 'content': context_block})
             except Exception:
                 pass
+        # If a caller provided explicit web_context (from two-step websearch), inject it as a system block with high priority
+        try:
+            if events and isinstance(events[-1], dict):
+                wc = events[-1].get('web_context')
+                if isinstance(wc, str) and wc.strip():
+                    system_blocks.append({'role': 'system', 'content': wc})
+        except Exception:
+            pass
         if context_template_backup is not None:
             try:
                 self.tmpl.context_template = context_template_backup
@@ -1360,7 +1388,16 @@ class MessageRouter:
                 _nsfw_batch = False
         except Exception:
             _nsfw_batch = False
-        cfg_models = self.model_cfg.get('models')
+        # Prefer web-specific models when web flag is set
+        or_cfg = (self.model_cfg.get('openrouter') or {}) if isinstance(self.model_cfg, dict) else {}
+        cfg_models = None
+        try:
+            if any(ev.get('web') for ev in (events or []) if isinstance(ev, dict)):
+                cfg_models = (or_cfg.get('web') or {}).get('models') or None
+        except Exception:
+            cfg_models = None
+        if cfg_models is None:
+            cfg_models = or_cfg.get('models')
         if isinstance(cfg_models, str):
             models_to_try = [m.strip() for m in cfg_models.split(',') if m.strip()]
         elif isinstance(cfg_models, list):
@@ -1377,7 +1414,7 @@ class MessageRouter:
                     prioritized.append(m)
                     seen_models.add(m)
             models_to_try = prioritized
-        allow_auto = bool(self.model_cfg.get('allow_auto_fallback', False))
+        allow_auto = bool(or_cfg.get('allow_auto_fallback', self.model_cfg.get('allow_auto_fallback', False)))
         stops = self.model_cfg.get('stop')
         correlation_id = f"{cid}-batch"
         reply = None

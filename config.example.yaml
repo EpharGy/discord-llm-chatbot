@@ -3,9 +3,12 @@ bot_type:
 
 # HTTP server auth (optional, required if bot_type is WEB or BOTH)
 http:
-  html_port: 8005
+  html_port: 8000
   html_host: 0.0.0.0  # Bind host for the web server (default 127.0.0.1; set 0.0.0.0 to expose on LAN)
-  bearer_token: "abc123"  # When set, required on /chat (and may be applied to /reset). Leave blank to disable.
+  bearer_token: ""  # When set, required on /chat (and may be applied to /reset). Leave blank to disable.
+  message_limit: 200  # message to store per room, older messages are discarded to keep under this limit. (default: 200)
+  inactive_room_days: 7 # number of days after which inactive rooms are cleared. (default: 1)
+
 
 LOG_LEVEL: INFO # INFO, DEBUG, FULL - INFO: standard levels; DEBUG adds more detail; FULL includes full request/response bodies (no secrets) 
 LIB_LOG_LEVEL: WARNING  # Controls verbosity of third-party libs (discord/httpx/httpcore). Typical: WARNING or ERROR; set DEBUG for deep library tracing.
@@ -26,46 +29,58 @@ model:
   context_window: 20480 # context_window: total context window (prompt + completion) supported by the selected model
   concurrency: 3  # number of concurrent requests to the LLM API
   retry_attempts: 2 # number of retry attempts for failed requests (0 = no retries)
-  provider: openrouter    #openrouter settings
-  models: # uses first model then sequential order if until one is available, https://openrouter.ai/models for more.
-    - openai/gpt-5-mini
-    - openai/gpt-5-chat
-    - openai/gpt-5
-    - x-ai/grok-4-fast
-    - google/gemini-2.0-flash-exp:free
-    - meta-llama/llama-4-scout:free
-    - google/gemini-2.5-flash
-    - meta-llama/llama-4-scout
-  allow_auto_fallback: false # use openrouter's automatic fallback if the main model is down, this may incur cost
-  # base_url: https://openrouter.ai/api/v1/chat/completions  # override if needed
-  http_referer: https://yoursitehere.com # optional for listing in Openrouter leaderboards/dashboards
-  x_title: Discord LLM Bot  # optional for listing in Openrouter leaderboards/dashboards
-  vision:
-    enabled: true
-    max_images: 4
-    models:
-      - openai/gpt-5-mini
+  openrouter:    #openrouter settings
+    models: # uses first model then sequential order if until one is available, https://openrouter.ai/models for more.
+    #  - openai/gpt-5-mini
+      - x-ai/grok-4-fast
+      - x-ai/grok-4
       - openai/gpt-5-chat
       - openai/gpt-5
-      - x-ai/grok-4-fast
       - google/gemini-2.0-flash-exp:free
       - meta-llama/llama-4-scout:free
       - meta-llama/llama-4-scout
-    mode: single-pass
-    retry_on_image_count_error: true
-    fallback_to_text: true
-    apply_in:
-      mentions: true
-      replies: true
-      general_chat: true
-      batch: true
-    log_image_urls: false
-    timeout_multiplier: 1.5
+      - tngtech/deepseek-r1t2-chimera:free
+    allow_auto_fallback: false # use openrouter's automatic fallback if the main model is down, this may incur cost
+    # base_url: https://openrouter.ai/api/v1/chat/completions  # override if needed
+    http_referer: https://yourwebsite.com # optional for listing in Openrouter leaderboards/dashboards
+    x_title: Your Fancy Name  # optional for listing in Openrouter leaderboards/dashboards
+    vision:
+      enabled: true
+      max_images: 4
+      models:
+      #  - openai/gpt-5-mini
+        - x-ai/grok-4
+        - openai/gpt-5-chat
+        - openai/gpt-5
+        - x-ai/grok-4-fast
+        - google/gemini-2.0-flash-exp:free
+        - meta-llama/llama-4-scout:free
+        - meta-llama/llama-4-scout
+      mode: single-pass
+      retry_on_image_count_error: true
+      fallback_to_text: true
+      apply_in:
+        mentions: true
+        replies: true
+        general_chat: true
+        batch: true
+      log_image_urls: false
+      timeout_multiplier: 1.5
+    web:
+      enabled: true
+      models:
+        - openai/gpt-4o-mini-search-preview
+        - openai/gpt-4.1-mini
+        - openai/gpt-4.1
+        - perplexity/sonar
+      engine: native  # native (provider only), exa (exa only )or undefined (native with exa fallback)
+      max_results: 3  # openrouter default is 5
+      search_context_size: low  # low, medium, high
   openai:
     enabled: true
     base_url: http://127.0.0.1:5001/v1/
     concurrency: 1
-    timeout: 300.0
+    timeout: 600.0
     retry_attempts: 1
   stop:
     - <|eot|> # End of text token for LLaMA models
@@ -85,10 +100,13 @@ participation:  # if and how the bot participates in chats
   random_response_chance: 0.2 # % chance (as decimal) for general chat responses
   general_chat: # settings for general chat participation
     allowed_channels: # list of Discord channel IDs where general chat responses are allowed; empty means none.
-      - '1234567890123456789' # channel 1
-      - '2345678901234567890' # channel 2
+      - '123456789012345678'
+      - '1234567890123456789'
+      - '2345678901234567890'
+      - '1266743874949353472'
     response_chance_override: # list of Discord channel IDs where random response chance is 100%, these id's must be in allowed_channels
-      - '1234567890123456789' # channel 1
+      - '123456789012345678'
+      - '1234567890123456789'
 
   bots:
     respond_to_bots: true # if true, bot may respond to other bot messages
@@ -102,6 +120,7 @@ participation:  # if and how the bot participates in chats
     batch_limit: 10 # max messages to batch into one response
     affects_cooldown: false # if true, conversation mode responses count against participation.cooldown
   cooldown:
+    logic_type: AND # "AND" or "OR" - if "AND", all conditions must be met to allow a response; if "OR", any single condition met allows a response
     min_messages_between_replies: 10  # for general chat, trigger allowed if >= this many messages since last reply
     min_seconds_between_replies: 900  # minutes; trigger allowed if >= this many seconds since last reply
   context_on_time_cooldown:
@@ -120,9 +139,9 @@ context:
   context_template_path: prompts/context_template.txt # template for formatting context messages
   lore:
     enabled: true # if true, use lore files for additional context
-    paths:  # Additional lore to use (these supplement lore in persona), json or markdown format
-    #  - lore/default.json
-      #- lore/default.md
+    paths:  # Accepts one or more JSON files with SillyTavern-like schema under 'entries', all entries are 'on', matches only first keywords, constant = true always loaded. md markdown lore files are always loaded if present
+    #  - lore/your_lore.md
+    #  - lore/more_lore.json
     md_priority: low  # high = higher priority than JSON lore, low = lower priority than JSON lore, md files are always loaded if present
     max_fraction: 0.33  # max fraction of context to use for lore (0.0 to 1.0)
 
@@ -134,7 +153,7 @@ discord:
     message_char_limit: 2000  # max characters of a message to read (Discord limit is currently 2000)
     max_response_messages: 3  # how many messages to split a long response into (1 = no splitting)
   admin_user_ids: # Discord user IDs to class as admin (ie can run / admin commands)
-    - '098765432109876543'
+    - '123456789012345678'
   elevated_user_ids: # Discord user IDs to class as elevated (ie can run / elevated commands)
-    - '098765432109876543'
-    - '987654321098765434'
+    - '123456789012345678'
+    - '234567890123456789'

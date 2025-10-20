@@ -84,6 +84,49 @@ class OpenRouterClient(LLMClient):
         if presence_penalty is not None:
             payload["presence_penalty"] = presence_penalty
 
+        # Optional OpenRouter web_search integration when routed via web lane
+        try:
+            cf = context_fields or {}
+            if bool(cf.get("web")):
+                # Read config dynamically to pick up runtime changes
+                from ..config_service import ConfigService  # local import to avoid cycle at module import time
+                cfg = ConfigService("config.yaml")
+                m = cfg.model() or {}
+                ornode = (m.get("openrouter") or {}) if isinstance(m, dict) else {}
+                web_cfg = (ornode.get("web") or {}) if isinstance(ornode, dict) else {}
+                if bool(web_cfg.get("enabled", False)):
+                    ws: dict = {}
+                    engine = web_cfg.get("engine")
+                    if engine:
+                        ws["engine"] = str(engine)
+                    try:
+                        mr = web_cfg.get("max_results")
+                        if mr is not None:
+                            ws["max_results"] = int(mr)
+                    except Exception:
+                        pass
+                    scs = web_cfg.get("search_context_size")
+                    if scs:
+                        ws["search_context_size"] = str(scs)
+                    # Use default OpenRouter search_prompt unless explicitly set in config
+                    sp = web_cfg.get("search_prompt")
+                    if isinstance(sp, str) and sp.strip():
+                        ws["search_prompt"] = sp.strip()
+                    if ws:
+                        payload["web_search"] = ws
+                        # Emit a compact log line to confirm parameters used
+                        try:
+                            self.log.info(
+                                f"[web-search-params] {fmt('model', model)} {fmt('engine', ws.get('engine'))} "
+                                f"{fmt('max_results', ws.get('max_results'))} {fmt('search_context_size', ws.get('search_context_size'))} "
+                                f"{fmt('has_prompt', bool(ws.get('search_prompt')))} {fmt('correlation', cf.get('correlation'))}"
+                            )
+                        except Exception:
+                            pass
+        except Exception:
+            # Fail open: if config read or mapping fails, proceed without web_search block
+            pass
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
