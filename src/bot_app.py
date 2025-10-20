@@ -74,6 +74,7 @@ async def main() -> None:
         pass
 
     model_cfg = config.model()
+    or_cfg = (model_cfg.get("openrouter") or {}) if isinstance(model_cfg, dict) else {}
     # Build providers based on config
     providers = []
     nsfw_providers = []
@@ -82,11 +83,11 @@ async def main() -> None:
     orc = None
     try:
         orc = OpenRouterClient(
-            concurrency=int(model_cfg.get("concurrency", 2)),
-            base_url=model_cfg.get("base_url", "https://openrouter.ai/api/v1/chat/completions"),
-            retry_attempts=int(model_cfg.get("retry_attempts", 2)),
-            http_referer=model_cfg.get("http_referer", "http://example.com"),
-            x_title=model_cfg.get("x_title", "Discord LLM Bot"),
+            concurrency=int(or_cfg.get("concurrency", model_cfg.get("concurrency", 2))),
+            base_url=or_cfg.get("base_url", model_cfg.get("base_url", "https://openrouter.ai/api/v1/chat/completions")),
+            retry_attempts=int(or_cfg.get("retry_attempts", model_cfg.get("retry_attempts", 2))),
+            http_referer=or_cfg.get("http_referer", model_cfg.get("http_referer", "http://example.com")),
+            x_title=or_cfg.get("x_title", model_cfg.get("x_title", "Discord LLM Bot")),
         )
         providers.append(orc)
         nsfw_providers.append(orc)

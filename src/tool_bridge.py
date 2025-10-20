@@ -72,14 +72,15 @@ class ToolBridge:
 
         # Model selection & generation (reusing router model config)
         cfg = self.router.model_cfg or {}
-        models = cfg.get("models")
+        or_cfg = (cfg.get("openrouter") or {}) if isinstance(cfg, dict) else {}
+        models = or_cfg.get("models")
         if isinstance(models, str):
             models_to_try = [m.strip() for m in models.split(",") if m.strip()]
         elif isinstance(models, list):
             models_to_try = [str(m) for m in models if str(m).strip()]
         else:
             models_to_try = []
-        allow_auto = bool(cfg.get("allow_auto_fallback", False))
+        allow_auto = bool(or_cfg.get("allow_auto_fallback", cfg.get("allow_auto_fallback", False)))
         stops = cfg.get("stop")
         max_tokens = cfg.get("max_tokens")
         temp = temperature if temperature is not None else self.router.model_cfg.get("temperature")

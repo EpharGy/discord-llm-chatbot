@@ -166,6 +166,60 @@ Goal: Collect and log basic usage statistics to help understand how the bot is b
 - [ ] Log stats in a lightweight db (e.g., SQLite)
 - [ ] expose stats via a /stats endpoint (admin only), create a simple HTML page with basic stat views.
 
+### OpenRouter cost capture (per-generation)
+
+Goal: Record authoritative per-call costs from OpenRouter for accurate billing/usage stats, with fallbacks when API data isn’t available.
+
+Design notes
+
+- Source of truth:
+  - When provider = OpenRouter, capture a generation id for each request (from response body or headers).
+  - Perform a background GET to `GET https://openrouter.ai/api/v1/generation?id=<generation_id>` to retrieve authoritative fields like `total_cost`, `usage`, `cache_discount`, token counts, timing, and `provider_name`.
+  - Do not block user replies; store results when available. If the fetch fails, compute a local estimate using our model catalog (price-per-token × tokens) and mark `cost_source = estimated`.
+- Coverage:
+  - Hook into all paths that can generate LLM calls: normal Discord messages, web chat, batch/conversation-mode summaries, and ToolBridge (slash-command helpers).
+  - Skip OpenAI-compatible/local providers for cost (tokens only) unless we add a custom price table.
+- Data points to persist per generation (expandable later):
+  - correlation_id, channel_id/name, user_id/name, web flag, nsfw flag, has_images
+  - model (slug) and provider_name
+  - tokens_prompt, tokens_completion (and any native token fields when present)
+  - total_cost (authoritative), usage, cache_discount (from API)
+  - local_est_cost_usd, price_snapshot_usd_per_million (at call time)
+  - timings: latency, generation_time, streamed, finish_reason
+  - tool/command context when applicable (tool_name, command_name)
+  - generation_id, created_at (from API), ts_recorded (local timestamp)
+
+Storage
+
+- Start with a lightweight DB:
+  - SQLite at `logs/usage.db` (default) or DuckDB at `logs/usage.duckdb` (configurable).
+  - Simple table: `usage_events` with an index on `(created_at, model)` and `(correlation_id)`.
+  - Optionally also append a JSONL line to `logs/usage-ledger.jsonl` for human inspection.
+
+Workflow
+
+1) On LLM finish, assemble a record with local token counts, model, context flags, and a price snapshot; write a provisional row with `cost_source = estimated` (if OpenRouter id not yet known).
+2) If OpenRouter returned/indicated a `generation_id`, enqueue a background fetch for the generation endpoint and update the row with authoritative cost fields (`cost_source = openrouter`).
+3) On startup or via a periodic job, retry missing generation lookups for recent windows (last 24–72h) to backfill any gaps.
+
+Tasks
+
+- [ ] Add a small `UsageLedger` service (SQLite by default) with `record_event()` and `update_from_openrouter_generation()`.
+- [ ] Capture `generation_id` (body or headers) in `OpenRouterClient` and return it in the provider result dict.
+- [ ] Spawn a background task per OpenRouter completion to fetch `/generation?id=...` and upsert authoritative fields.
+- [ ] Persist a `price_snapshot_usd_per_million` and compute `local_est_cost_usd` at record time.
+- [ ] Wire into: MessageRouter (Discord + Web), conversation-mode batch replies, and ToolBridge.
+- [ ] Admin command `/llmbot_usage window:24h|7d|30d group_by:total|model|user` returning totals (prefer authoritative cost, fallback to estimate).
+- [ ] Optional HTML view under `/stats` (admin-gated) with simple charts.
+- [ ] Config toggles: `stats.enabled`, `stats.store = sqlite|duckdb`, `stats.openrouter_lookup = true`, `stats.retention_days`.
+
+Acceptance Criteria
+
+- Each OpenRouter completion eventually has an authoritative `total_cost` recorded (or clearly marked as `estimated` when not retrievable).
+- `/llmbot_usage` shows accurate totals for the selected window with clear cost-source labeling.
+- Background lookups don’t delay user-visible replies; retries/backfill work without blocking.
+- Tokens and costs aggregate correctly by model and by user; tool-triggered events are labeled.
+
 ## Weather Interesting Fact improvement (prevent re-using same fact)
 
 - [ ] Store random fact about the searched location and insert into prompt for subsequent weather requests for that location to negative steer LLM into providing a different fact.

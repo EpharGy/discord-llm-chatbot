@@ -683,7 +683,8 @@ class MessageRouter:
         reply = None
         if self.llm is not None:
             models_to_try: list[str] = []
-            cfg_models = self.model_cfg.get("models")
+            or_cfg = (self.model_cfg.get("openrouter") or {}) if isinstance(self.model_cfg, dict) else {}
+            cfg_models = or_cfg.get("models")
             if isinstance(cfg_models, str):
                 models_to_try = [m.strip() for m in cfg_models.split(",") if m.strip()]
             elif isinstance(cfg_models, list):
@@ -698,7 +699,7 @@ class MessageRouter:
                     pass
                 allow_auto = False
             else:
-                allow_auto = bool(self.model_cfg.get("allow_auto_fallback", False))
+                allow_auto = bool(or_cfg.get("allow_auto_fallback", self.model_cfg.get("allow_auto_fallback", False)))
             stops = self.model_cfg.get("stop")
 
             # Prefer vision-capable models when sending images

@@ -81,13 +81,14 @@ def build_router_from_config(cfg: ConfigService) -> MessageRouter:
     nsfw_providers = []
     vision_providers = []
     orc = None
+    or_cfg = (model_cfg.get("openrouter") or {}) if isinstance(model_cfg, dict) else {}
     try:
         orc = OpenRouterClient(
-            concurrency=int(model_cfg.get("concurrency", 2)),
-            base_url=model_cfg.get("base_url", "https://openrouter.ai/api/v1/chat/completions"),
-            retry_attempts=int(model_cfg.get("retry_attempts", 2)),
-            http_referer=model_cfg.get("http_referer", "http://example.com"),
-            x_title=model_cfg.get("x_title", "Discord LLM Bot"),
+            concurrency=int(or_cfg.get("concurrency", model_cfg.get("concurrency", 2))),
+            base_url=or_cfg.get("base_url", model_cfg.get("base_url", "https://openrouter.ai/api/v1/chat/completions")),
+            retry_attempts=int(or_cfg.get("retry_attempts", model_cfg.get("retry_attempts", 2))),
+            http_referer=or_cfg.get("http_referer", model_cfg.get("http_referer", "http://example.com")),
+            x_title=or_cfg.get("x_title", model_cfg.get("x_title", "Discord LLM Bot")),
         )
         providers.append(orc)
         nsfw_providers.append(orc)
@@ -167,7 +168,7 @@ def create_app() -> FastAPI:
     prune_task: asyncio.Task | None = None
 
     def _model_list() -> list[str]:
-        models = cfg.model().get("models")
+        models = (cfg.model().get("openrouter") or {}).get("models")
         if isinstance(models, str):
             return [m.strip() for m in models.split(',') if m.strip()]
         if isinstance(models, list):

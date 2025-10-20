@@ -650,11 +650,14 @@ class ConfigService:
         self._maybe_reload()
         return int(self.participation().get("conversation_mode", {}).get("batch_limit", 10))
 
-    # Vision (multimodal) configuration (now under model.vision; keep legacy fallback)
+    # Vision (multimodal) configuration (now under model.openrouter.vision; keep legacy fallback)
     def vision(self) -> dict:
         self._maybe_reload()
         m = self.model() or {}
-        v = m.get("vision") or {}
+        v = (m.get("openrouter") or {}).get("vision") or {}
+        if not v:
+            # Legacy fallback to previous location under model.vision
+            v = m.get("vision") or {}
         if not v:
             # Legacy fallback: top-level "vision" for backward compatibility
             v = self._cfg.raw.get("vision", {}) or {}

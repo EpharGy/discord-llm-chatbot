@@ -317,11 +317,11 @@ class AdminCog(commands.Cog):
         scope_key = scope.value
         if scope_key == "vision":
             try:
-                models = (cfg.model().get("vision") or {}).get("models") or []
+                models = ((cfg.model().get("openrouter") or {}).get("vision") or {}).get("models") or []
             except Exception:
                 models = []
         else:
-            models = cfg.model().get("models") or []
+            models = (cfg.model().get("openrouter") or {}).get("models") or []
         if isinstance(models, str):
             models = [m.strip() for m in models.split(",") if m.strip()]
         models = [str(m) for m in models]
@@ -389,11 +389,12 @@ class AdminCog(commands.Cog):
             new_list = [sel] + [m for m in models if m != sel]
             data = self._read_config("config.yaml")
             node = data.setdefault("model", {})
+            ornode = node.setdefault("openrouter", {})
             if scope_key == "vision":
-                v = node.setdefault("vision", {})
+                v = ornode.setdefault("vision", {})
                 v["models"] = new_list
             else:
-                node["models"] = new_list
+                ornode["models"] = new_list
             self._write_config("config.yaml", data)
             self._hot_apply_model_cfg()
             try:
@@ -512,8 +513,9 @@ class AdminCog(commands.Cog):
             slug = cand[idx - 1][0]
             data = self._read_config("config.yaml")
             node = data.setdefault("model", {})
+            ornode = node.setdefault("openrouter", {})
             if scope_key == "vision":
-                v = node.setdefault("vision", {})
+                v = ornode.setdefault("vision", {})
                 current = v.get("models") or []
                 if isinstance(current, str):
                     current = [m.strip() for m in current.split(",") if m.strip()]
@@ -521,12 +523,12 @@ class AdminCog(commands.Cog):
                 new_list = [slug] + [m for m in current if m != slug]
                 v["models"] = new_list
             else:
-                current = node.get("models") or []
+                current = ornode.get("models") or []
                 if isinstance(current, str):
                     current = [m.strip() for m in current.split(",") if m.strip()]
                 current = [str(m) for m in current]
                 new_list = [slug] + [m for m in current if m != slug]
-                node["models"] = new_list
+                ornode["models"] = new_list
             self._write_config("config.yaml", data)
             self._hot_apply_model_cfg()
             try:
