@@ -34,6 +34,22 @@ class MessageRouter:
         self.model_cfg = model_cfg or {}
         self.lore = lore
         self.lore_cfg = lore_config or {"enabled": False, "max_fraction": 0.33}
+        # Registry of slash-command bot messages to ignore replies to in normal conversation flow
+        # { channel_id: { message_id: expiry_datetime } }
+        self._command_messages: dict[str, dict[int, datetime]] = {}
+
+    def register_command_message(self, channel_id: str, message_id: int, ttl_seconds: int = 60) -> None:
+        try:
+            expiry = now_local() + _timedelta(seconds=int(ttl_seconds))
+            bucket = self._command_messages.setdefault(str(channel_id), {})
+            bucket[int(message_id)] = expiry
+            # Opportunistic cleanup of expired entries
+            now = now_local()
+            stale = [mid for mid, ts in bucket.items() if ts <= now]
+            for mid in stale:
+                bucket.pop(mid, None)
+        except Exception:
+            pass
 
     def _system_message_for_overrides(self, *, is_nsfw: bool, persona_override: dict | None) -> str:
         if not persona_override:
@@ -191,6 +207,18 @@ class MessageRouter:
                 event["reply_to_author_name"] = getattr(parent.author, "display_name", None) or ("bot" if getattr(parent.author, "bot", False) else "user")
                 if bot_id and parent.author.id == bot_id:
                     event["is_reply_to_bot"] = True
+                # Mark if the parent message was produced by a slash command (registered by cogs)
+                try:
+                    bucket = self._command_messages.get(event["channel_id"], {})
+                    expiry = bucket.get(int(parent.id))
+                    if expiry and expiry > now_local():
+                        event["reply_to_command"] = True
+                    else:
+                        event["reply_to_command"] = False
+                        if expiry:
+                            bucket.pop(int(parent.id), None)
+                except Exception:
+                    event["reply_to_command"] = False
         except Exception:
             pass
 
@@ -383,7 +411,13 @@ class MessageRouter:
         try:
             # Mentions must bypass batching (reply immediately). Only skip immediately if this message will be batched
             if self.batcher and self.memory.conversation_mode_active(event["channel_id"]) and not event.get("is_mentioned", False):
-                if allowed_channel or event.get("is_reply"):
+                # Do not batch direct user replies; only batch non-reply messages in allowed channels
+                if event.get("is_reply", False):
+                    try:
+                        self.log.debug(f"batch-skip(reply) {fmt('channel', event.get('channel_name', event['channel_id']))} {fmt('msg', event.get('message_id',''))}")
+                    except Exception:
+                        pass
+                elif allowed_channel:
                     # Ensure recorded (if not previously) and enqueue for batch processing
                     if not (is_direct or allowed_channel):
                         self.memory.record(event)

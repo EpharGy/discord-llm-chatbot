@@ -357,6 +357,14 @@ class AdminCog(commands.Cog):
                 out_msg = await interaction.followup.send(content)
             except Exception:
                 return
+        # Register the bot message as a slash-command prompt to suppress normal reply logic
+        try:
+            router = getattr(self.bot, 'router', None)
+            channel = getattr(interaction, 'channel', None)
+            if router and out_msg and channel:
+                router.register_command_message(str(getattr(channel, 'id', '')), int(getattr(out_msg, 'id', 0)), ttl_seconds=60)
+        except Exception:
+            pass
         # For non-admins, we're done after showing the list
         if not is_admin:
             return

@@ -172,6 +172,11 @@ class ParticipationPolicy:
             self._log_decision(event, False, "anti-spam")
             return {"allow": False, "reason": "anti-spam", "ephemeral": True}
 
+        # Ignore replies that target a bot's slash-command response
+        if event.get("is_reply") and event.get("is_reply_to_bot") and event.get("reply_to_command"):
+            self._log_decision(event, False, "slash-reply-ignore")
+            return {"allow": False, "reason": "slash-reply-ignore"}
+
         # Mentions/name triggers vs general chat
         content = (event.get("content") or "").lower()
         name_matched = self.name_match(content) if self.respond_to_name else False
