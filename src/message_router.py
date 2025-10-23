@@ -294,7 +294,7 @@ class MessageRouter:
 
         # Determine direct message trigger by name/mention
         content_lower = (event.get("content") or "").lower()
-        name_matched = any(alias in content_lower for alias in self.policy.aliases) if getattr(self.policy, "respond_to_name", False) else False
+        name_matched = self.policy.name_match(content_lower) if getattr(self.policy, "respond_to_name", False) else False
         # Treat replies to the bot as direct triggers as well
         is_direct = bool(event.get("is_mentioned") or name_matched or event.get("is_reply_to_bot"))
         allowed_channel = event["channel_id"] in getattr(self.policy, "allowed_general_channels", set())
@@ -318,7 +318,7 @@ class MessageRouter:
                 allow_non_replies = bool(cm.get("include_non_replies", False))
                 mention_required = bool(getattr(self.policy, "mention_required", False))
                 content_lower = (event.get("content") or "").lower()
-                name_matched = any(alias in content_lower for alias in getattr(self.policy, "aliases", [])) if getattr(self.policy, "respond_to_name", False) else False
+                name_matched = self.policy.name_match(content_lower) if getattr(self.policy, "respond_to_name", False) else False
                 is_direct = bool(event.get("is_mentioned") or name_matched)
 
                 # Mentions/names are always allowed during the window and do not consume budget
@@ -359,7 +359,7 @@ class MessageRouter:
             if decision.get("ephemeral") and decision.get("reason") == "anti-spam":
                 # If this was a mention (or name alias), enqueue it so it can be answered later
                 content_lower = (event.get("content") or "").lower()
-                name_matched = any(alias in content_lower for alias in self.policy.aliases)
+                name_matched = self.policy.name_match(content_lower)
                 if self.queue and (event.get("is_mentioned") or name_matched):
                     enq_ok = self.queue.enqueue(PendingMention(channel_id=event["channel_id"], message_id=message.id, style="reply"))
                     if enq_ok:
@@ -626,7 +626,7 @@ class MessageRouter:
             if vcfg.vision_enabled():
                 # Determine scope class for gating
                 content_lower = (event.get("content") or "").lower()
-                name_matched = any(a in content_lower for a in getattr(self.policy, "aliases", [])) if getattr(self.policy, "respond_to_name", False) else False
+                name_matched = self.policy.name_match(content_lower) if getattr(self.policy, "respond_to_name", False) else False
                 if event.get("is_reply_to_bot"):
                     scope_class = "replies"
                 elif event.get("is_mentioned") or name_matched:

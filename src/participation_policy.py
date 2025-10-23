@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 import random
 from .logger_factory import get_logger
 from .utils.logfmt import fmt
@@ -14,6 +15,40 @@ class ParticipationPolicy:
         self.mention_required = bool(participation.get("mention_required", True))
         self.respond_to_name = bool(participation.get("respond_to_name", True))
         self.aliases = set(a.lower() for a in participation.get("name_aliases", []))
+        # Name matching mode: 'strict' (spaces on both sides) | 'loose' (alias at token start, may be followed by a valid separator)
+        self.name_matching_mode = str(participation.get("name_matching", "strict")).strip().lower()
+        if self.name_matching_mode not in ("strict", "loose"):
+            self.name_matching_mode = "strict"
+        # Precompile regex patterns per alias for fast checks (isolate errors per-alias; never drop all)
+        self._alias_patterns: list[tuple[str, re.Pattern[str]]] = []
+        for a in self.aliases:
+            if not a:
+                continue
+            try:
+                esc = re.escape(a)
+                if self.name_matching_mode == "strict":
+                    # Strict: alias must not be preceded by a word char or hyphen (so no 'don-mai' or 'main'),
+                    # and must be followed by optional possessive/contraction (’s, 'd, etc.) then
+                    # end/space/or natural punctuation. Include ) ] } , . ! ? : ; and right double-quote.
+                    pat = re.compile(rf"(?<![\w-]){esc}(?=(?:['’](?:s|d|m|re|ll))?(?:$|\s|[\)\]}} ,\.\!\?\:\;”]))")
+                else:
+                    # loose: alias must be at start of string or preceded by whitespace, and
+                    # must be followed by end/whitespace or a valid separator (e.g., '-', '_', ':', ',', '.', ';', '!', '?', ')', ']', '}').
+                    # Keep all trailing allowed chars inside one character class so it compiles consistently.
+                    pat = re.compile(rf"(?:(?<=\s)|^){esc}(?=$|[\s\-_:,\.\;\!\?\)\]}}])")
+                self._alias_patterns.append((a, pat))
+            except re.error as e:
+                try:
+                    self.log.warning(f"[alias-regex-error] alias={a} mode={self.name_matching_mode} err={e}")
+                except Exception:
+                    pass
+                continue
+        try:
+            self.log.debug(
+                f"[alias-config] mode={self.name_matching_mode} aliases={list(self.aliases)} patterns={len(self._alias_patterns)}"
+            )
+        except Exception:
+            pass
 
         cooldown = participation.get("cooldown", {})
         self.cooldown_min_messages = int(cooldown.get(
@@ -139,7 +174,13 @@ class ParticipationPolicy:
 
         # Mentions/name triggers vs general chat
         content = (event.get("content") or "").lower()
-        name_matched = any(alias in content for alias in self.aliases) if self.respond_to_name else False
+        name_matched = self.name_match(content) if self.respond_to_name else False
+        try:
+            self.log.debug(
+                f"[name-check] mode={self.name_matching_mode} matched={bool(name_matched)} content_preview={content[:60]}"
+            )
+        except Exception:
+            pass
         is_direct = bool(event.get("is_mentioned", False) or name_matched or event.get("is_reply_to_bot", False))
 
         # If mention is required, only respond to direct mentions or name aliases
@@ -155,8 +196,9 @@ class ParticipationPolicy:
 
         # If mention or name trigger: allowed (subject to anti-spam and recency), reply style
         if is_direct:
-            self._log_decision(event, True, "mention", style="reply")
-            return {"allow": True, "reason": "mention", "style": "reply"}
+            reason = "mention-alias" if (name_matched and not event.get("is_mentioned", False)) else "mention"
+            self._log_decision(event, True, reason, style="reply")
+            return {"allow": True, "reason": reason, "style": "reply"}
 
         # General chat: probabilistic trigger with cooldowns, only in allowed channels
         if event["channel_id"] not in self.allowed_general_channels:
@@ -196,3 +238,30 @@ class ParticipationPolicy:
         reason = "general-override" if is_override else "general"
         self._log_decision(event, True, reason, style="normal")
         return {"allow": True, "reason": reason, "style": "normal", "context_hint": context_hint}
+
+    def name_match(self, content: str) -> bool:
+        """Name alias match according to configured mode.
+
+        strict: requires a real space on both sides of alias (no start/end matches).
+        loose: alias at start of token (start of string or preceded by whitespace) and followed by
+               end/whitespace or a valid separator (e.g., '-') so 'mai-chan' matches; 'main' and 'don-mai' do not.
+        """
+        if not self.respond_to_name or not content:
+            return False
+        try:
+            s = content.lower()
+        except Exception:
+            s = str(content)
+        for alias, p in self._alias_patterns:
+            try:
+                if p.search(s):
+                    try:
+                        self.log.debug(
+                            f"[name-match] mode={self.name_matching_mode} alias={alias} content_preview={s[:50]}"
+                        )
+                    except Exception:
+                        pass
+                    return True
+            except Exception:
+                continue
+        return False
