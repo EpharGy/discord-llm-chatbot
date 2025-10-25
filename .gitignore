@@ -51,6 +51,7 @@ prompts/*
 !cogs/*
 /cogs/extra_cogs/*
 !/cogs/extra_cogs/COG_GUIDELINES.md
+reminders.json
 
 # web runtime data
 /src/web/data/

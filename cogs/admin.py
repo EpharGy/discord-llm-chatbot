@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import httpx
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from src.config_service import ConfigService
+try:
+    from src.tool_bridge import ToolBridge  # when running via PYTHONPATH=src
+except Exception:  # pragma: no cover - fallback for alt import path
+    try:
+        from tool_bridge import ToolBridge  # type: ignore
+    except Exception:  # pragma: no cover
+        ToolBridge = None  # type: ignore
 from src.logger_factory import set_log_levels, get_logger
 from src.participation_policy import ParticipationPolicy
 from src.llm.openrouter_catalog import get_catalog, refresh_catalog_with_logging, ModelInfo
@@ -117,6 +126,100 @@ class AdminCog(commands.Cog):
             await interaction.followup.send("Config reloaded and logging updated.", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"Reload failed: {e}", ephemeral=True)
+
+    @app_commands.check(_admin_check)
+    @app_commands.command(name="llmbot_credits", description="Show OpenRouter remaining credits")
+    async def llmbot_credits(self, interaction: discord.Interaction):
+        # Log usage
+        try:
+            uname = getattr(interaction.user, "display_name", None) or getattr(interaction.user, "name", "user")
+            log.info(f"[Discord] {uname} used /llmbot_credits")
+        except Exception:
+            pass
+        try:
+            await interaction.response.defer(ephemeral=False)
+        except Exception:
+            pass
+        # Build headers
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        if not api_key:
+            try:
+                await interaction.followup.send("Missing OPENROUTER_API_KEY.", ephemeral=True)
+            except Exception:
+                pass
+            return
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+        }
+        # Optional ranking headers from config (if present)
+        try:
+            cfg = ConfigService("config.yaml")
+            model_cfg = cfg.model() or {}
+            ornode = (model_cfg.get("openrouter") or {}) if isinstance(model_cfg, dict) else {}
+            http_referer = ornode.get("http_referer") or model_cfg.get("http_referer")
+            x_title = ornode.get("x_title") or model_cfg.get("x_title")
+            if http_referer:
+                headers["HTTP-Referer"] = str(http_referer)
+            if x_title:
+                headers["X-Title"] = str(x_title)
+        except Exception:
+            pass
+        url = "https://openrouter.ai/api/v1/credits"
+        # Fetch credits
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                r = await client.get(url, headers=headers)
+                r.raise_for_status()
+                data = r.json() or {}
+        except httpx.HTTPStatusError as e:
+            body = e.response.text if e.response is not None else "<no body>"
+            await interaction.followup.send(f"OpenRouter error {getattr(e.response, 'status_code', '?')}: {body[:300]}", ephemeral=True)
+            return
+        except Exception as e:
+            await interaction.followup.send(f"Request failed: {e}", ephemeral=True)
+            return
+        node = data.get("data") or {}
+        try:
+            total = float(node.get("total_credits") or 0.0)
+        except Exception:
+            total = 0.0
+        try:
+            used = float(node.get("total_usage") or 0.0)
+        except Exception:
+            used = 0.0
+        remaining = max(total - used, 0.0)
+        
+        # Persona-styled response via ToolBridge when available
+        router = getattr(self.bot, 'router', None)
+        styled = None
+        summary = f"There are ${remaining:0.2f} credits remaining."
+        details = f"total_credits=${total:0.2f}; total_usage=${used:0.2f}"
+        if router is not None and ToolBridge is not None:
+            try:
+                tool = ToolBridge(router)
+                is_nsfw = bool(getattr(getattr(interaction, 'channel', None), 'nsfw', False)) or bool(getattr(getattr(getattr(interaction, 'channel', None), 'parent', None), 'nsfw', False))
+                styled = await tool.run(
+                    channel_id=str(getattr(getattr(interaction, 'channel', None), 'id', 'web-room')),
+                    tool_name="credits",
+                    intent="provide_remaining_credits",
+                    summary=summary,
+                    details=details,
+                    block_char_limit=1024,
+                    is_nsfw=is_nsfw,
+                    temperature=0.2,
+                    style_hint="A short, confident confirmation, panic should increase based on the amount of credits left. This represents how many credits are left for further use, an amount above $5 is a lot, $3 is moderate, below $1 is low, belo $0.25 is critical. Avoid questions.",
+                )
+            except Exception:
+                styled = None
+        text = styled or summary
+        try:
+            await interaction.followup.send(text, ephemeral=True)
+        except Exception:
+            try:
+                # Fallback ephemeral if normal send fails
+                await interaction.followup.send(text, ephemeral=True)
+            except Exception:
+                pass
 
     @app_commands.check(_admin_check)
     @app_commands.command(name="llmbot_debug", description="Set LOG_LEVEL (INFO | DEBUG | FULL)")
