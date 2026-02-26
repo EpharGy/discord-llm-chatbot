@@ -37,6 +37,33 @@ python -m src.bot_app
 
 If the bot logs in successfully, invite it to your server and mention it by one of the name aliases from your selected persona (see Persona system).
 
+## Docker run (Synology/CLI)
+
+Docker deployment files are at repo root:
+- `Dockerfile`
+- `docker-compose.yml`
+
+This makes NAS sync simple: copy the repo to your NAS folder (for example `/volume1/docker/llm-bot-main`) and run compose there.
+
+Required in `.env` for Docker:
+- `DISCORD_TOKEN`
+- `OPENROUTER_API_KEY`
+- `PUID`
+- `PGID`
+
+Deploy:
+
+```bash
+docker compose down
+docker compose up -d --build
+docker compose logs -f
+```
+
+Persistence and write-back:
+- `config.yaml` is mounted writable (`./config.yaml:/app/config.yaml:rw`)
+- `./cogs` is mounted writable (`./cogs:/app/cogs:rw`)
+- Price tracker/reminders/weather cache persist directly in repo-like paths under `cogs/`
+
 ### Web UI (optional)
 
 - Enable in `config.yaml`:

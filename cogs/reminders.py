@@ -17,7 +17,10 @@ except ImportError:
     except ImportError:
         ToolBridge = None  # type: ignore
 
-REMINDER_FILE = os.path.join(os.path.dirname(__file__), 'reminders.json')
+REMINDER_FILE = os.getenv(
+    'REMINDER_FILE',
+    os.path.join(os.path.dirname(__file__), 'reminders.json')
+)
 CHECK_INTERVAL = 30  # seconds
 
 TIME_PATTERN = re.compile(r'((?P<days>\d+)d)?((?P<hours>\d+)h)?((?P<minutes>\d+)m)?')

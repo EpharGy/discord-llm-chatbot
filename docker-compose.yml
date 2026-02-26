@@ -1,0 +1,29 @@
+services:
+  discord-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: discord-llm-bot:full
+    command: ["python", "-m", "src.bot_app"]
+    user: "${PUID}:${PGID}"
+    env_file:
+      - .env
+    environment:
+      REMINDER_FILE: /app/cogs/reminders.json
+      PRICE_TRACKER_DB_FILE: /app/cogs/extra_cogs/price_tracker.db
+      PRICE_TRACKER_IMAGE_DIR: /app/cogs/extra_cogs/price_tracker_items
+      WEATHER_CACHE_PATH: /app/cogs/extra_cogs/weather_cache.json
+      MPLCONFIGDIR: /app/logs/matplotlib
+      XDG_CACHE_HOME: /app/logs/.cache
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+      - ./config.yaml:/app/config.yaml:rw
+      - ./cogs:/app/cogs:rw
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

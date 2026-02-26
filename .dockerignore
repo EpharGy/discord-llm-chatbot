@@ -1,0 +1,13 @@
+.git
+.gitignore
+.vscode
+.venv
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+logs/
+*.session.sql
+.matplotlib/
+docker-bot/

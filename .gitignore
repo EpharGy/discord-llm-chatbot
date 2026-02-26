@@ -27,6 +27,7 @@ logs/
 .pytest_cache/
 .coverage
 htmlcov/
+.matplotlib/
 
 # OS
 .DS_Store
