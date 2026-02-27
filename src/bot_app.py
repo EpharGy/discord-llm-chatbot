@@ -17,6 +17,7 @@ from .llm.multi_backend_client import ContextualMultiBackendClient
 from .conversation_batcher import ConversationBatcher
 from .lore_service import LoreService
 from .llm.openrouter_catalog import refresh_catalog_with_logging
+from .utils.time_utils import set_app_timezone
 
 
 async def main() -> None:
@@ -36,9 +37,11 @@ async def main() -> None:
         pass
 
     config = ConfigService("config.yaml")
+    tz_name = config.timezone()
+    set_app_timezone(tz_name)
     configure_logging(
         level=config.log_level(),
-        tz=None,
+        tz=tz_name or "system",
         fmt="text",
         lib_log_level=config.lib_log_level(),
         console_to_file=config.log_console(),

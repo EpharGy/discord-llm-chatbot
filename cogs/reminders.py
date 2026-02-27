@@ -9,6 +9,11 @@ from datetime import datetime, timedelta
 import logging
 
 try:
+    from src.utils.time_utils import ISO_FORMAT, ensure_local, format_local, now_local
+except ImportError:
+    from utils.time_utils import ISO_FORMAT, ensure_local, format_local, now_local
+
+try:
     from src.tool_bridge import ToolBridge
 except ImportError:
     # Fallback when PYTHONPATH includes 'src'
@@ -25,23 +30,8 @@ CHECK_INTERVAL = 30  # seconds
 
 TIME_PATTERN = re.compile(r'((?P<days>\d+)d)?((?P<hours>\d+)h)?((?P<minutes>\d+)m)?')
 
-ISO_FORMAT = "%Y-%m-%dT%H:%M:%S.%f%z"
-
-
-def now_local() -> datetime:
-    return datetime.now().astimezone()
-
-
-def ensure_local(dt: datetime) -> datetime:
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=now_local().tzinfo)
-    return dt.astimezone()
-
-
 def format_timestamp(dt: datetime) -> str:
-    local_dt = ensure_local(dt)
-    assert local_dt is not None
-    return local_dt.strftime(ISO_FORMAT)
+    return format_local(dt)
 
 
 def parse_timestamp(value: str | None) -> datetime | None:

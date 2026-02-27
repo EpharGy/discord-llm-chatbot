@@ -9,6 +9,8 @@ services:
     env_file:
       - .env
     environment:
+      BOT_TIMEZONE: ${BOT_TIMEZONE:-}
+      TZ: ${TZ:-}
       REMINDER_FILE: /app/cogs/reminders.json
       PRICE_TRACKER_DB_FILE: /app/cogs/extra_cogs/price_tracker.db
       PRICE_TRACKER_IMAGE_DIR: /app/cogs/extra_cogs/price_tracker_items

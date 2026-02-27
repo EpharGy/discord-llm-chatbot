@@ -567,6 +567,30 @@ class ConfigService:
     def log_level(self) -> str:
         return str(self._cfg.raw.get("LOG_LEVEL", "INFO")).upper()
 
+    def timezone(self) -> str | None:
+        """Return optional application timezone configuration.
+
+        Accepted values:
+        - "system" (or omitted): use environment/system timezone
+        - "UTC"
+        - IANA timezone name (e.g. "Australia/Adelaide")
+
+        Backward-compatible lookup:
+        - top-level `TIMEZONE`
+        - `logging.timezone`
+        - `time.timezone`
+        """
+        self._maybe_reload()
+        raw = (
+            self._cfg.raw.get("TIMEZONE")
+            or (self._cfg.raw.get("logging") or {}).get("timezone")
+            or (self._cfg.raw.get("time") or {}).get("timezone")
+        )
+        if raw is None:
+            return None
+        value = str(raw).strip()
+        return value or None
+
     def lib_log_level(self) -> str | None:
         v = self._cfg.raw.get("LIB_LOG_LEVEL") or self._cfg.raw.get("LIV_LOG_LEVEL")
         return str(v).upper() if v else None

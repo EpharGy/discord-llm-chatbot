@@ -51,6 +51,10 @@ Required in `.env` for Docker:
 - `PUID`
 - `PGID`
 
+Optional (recommended for deterministic local time in container):
+- `BOT_TIMEZONE` (app timezone override, e.g. `Australia/Adelaide` or `UTC`)
+- `TZ` (system/container timezone hint; used if `BOT_TIMEZONE` is not set)
+
 Deploy:
 
 ```bash

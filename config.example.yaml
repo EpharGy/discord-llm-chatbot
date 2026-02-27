@@ -12,6 +12,7 @@ http:
 
 LOG_LEVEL: INFO # INFO, DEBUG, FULL - INFO: standard levels; DEBUG adds more detail; FULL includes full request/response bodies (no secrets) 
 LIB_LOG_LEVEL: WARNING  # Controls verbosity of third-party libs (discord/httpx/httpcore). Typical: WARNING or ERROR; set DEBUG for deep library tracing.
+TIMEZONE: system  # system (default), UTC, or IANA zone like Australia/Adelaide. Used by app time calculations + log timestamps.
 LOG_PROMPTS: false   # if true, prompt and response text are saved as files in logs/prompts-YYYYMMDD-HHMMSS for debugging; may include sensitive info so use with caution
 LOG_CONSOLE: false  # if true, console logged to logs/log.log for debugging
 LOG_ERRORS: true   # if true, ERROR level logs logged to logs/errors.log for debugging

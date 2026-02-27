@@ -3,6 +3,7 @@ from logging.handlers import RotatingFileHandler
 import os
 from typing import Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from .utils.time_utils import local_tzinfo
 
 _CONFIGURED = False
 _FULL_ENABLED = False
@@ -24,17 +25,17 @@ class _TzFormatter(logging.Formatter):
         if tz == "UTC":
             self._tz = _dt.timezone.utc
         elif tz is None or tz == "system":
-            self._tz = _dt.datetime.now().astimezone().tzinfo
+            self._tz = local_tzinfo()
         else:
             try:
                 self._tz = ZoneInfo(tz)
             except ZoneInfoNotFoundError:
-                self._tz = _dt.datetime.now().astimezone().tzinfo
+                self._tz = local_tzinfo()
 
     def formatTime(self, record, datefmt=None):
         # record.created is epoch seconds (float)
         import datetime as _dt
-        dt = _dt.datetime.fromtimestamp(record.created, tz=self._tz or _dt.datetime.now().astimezone().tzinfo)
+        dt = _dt.datetime.fromtimestamp(record.created, tz=self._tz or local_tzinfo())
         if datefmt:
             return dt.strftime(datefmt)
         return dt.isoformat()
@@ -136,9 +137,9 @@ def configure_logging(level: Optional[str] = None, tz: Optional[str] = None, fmt
 
 
 def get_logger(name: str) -> logging.Logger:
-    # If not configured explicitly, default to INFO, Adelaide time, text format
+    # If not configured explicitly, default to INFO/system-local timezone, text format
     if not _CONFIGURED:
-        configure_logging(level="INFO", tz="Australia/Adelaide", fmt="text")
+        configure_logging(level="INFO", tz="system", fmt="text")
     return logging.getLogger(name)
 
 

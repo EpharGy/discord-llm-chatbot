@@ -20,7 +20,7 @@ from .llm.openai_compat_client import OpenAICompatClient
 from .llm.multi_backend_client import ContextualMultiBackendClient
 from .conversation_batcher import ConversationBatcher
 from .lore_service import LoreService
-from .utils.time_utils import ISO_FORMAT, ensure_local, format_local, now_local
+from .utils.time_utils import ISO_FORMAT, ensure_local, format_local, now_local, set_app_timezone
 from .utils.logfmt import fmt
 from .web_room_store import WebRoomStore
 
@@ -151,7 +151,9 @@ def build_router_from_config(cfg: ConfigService) -> MessageRouter:
 
 def create_app() -> FastAPI:
     cfg = ConfigService("config.yaml")
-    configure_logging(level=cfg.log_level(), tz=None, fmt="text", lib_log_level=cfg.lib_log_level(), console_to_file=cfg.log_console(), error_file=cfg.log_errors())
+    tz_name = cfg.timezone()
+    set_app_timezone(tz_name)
+    configure_logging(level=cfg.log_level(), tz=tz_name or "system", fmt="text", lib_log_level=cfg.lib_log_level(), console_to_file=cfg.log_console(), error_file=cfg.log_errors())
     log = get_logger("http_app")
     router = build_router_from_config(cfg)
     bearer = cfg.http_auth_bearer_token()
