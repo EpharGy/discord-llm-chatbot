@@ -5,10 +5,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends tzdata \
-    && rm -rf /var/lib/apt/lists/*
-
 RUN adduser --disabled-password --gecos "" --uid 10001 appuser
 
 COPY requirements.txt ./
