@@ -1,63 +1,48 @@
-# Docker Migration Tracker (Validation Phase)
+# Docker Migration Tracker
 
-Purpose: single forward-looking tracker for Docker migration on NAS while we validate stability before calling migration complete.
+Purpose: keep Docker migration work easy to audit, so temporary MVP artifacts can be removed or promoted cleanly.
 
-## Current phase
+## Status legend
+- `KEEP`: intended long-term
+- `TEMP`: MVP-only helper, remove after full migration is stable
+- `PROMOTE`: currently MVP, likely to become permanent with minor edits
 
-**Status:** validating
+## Current inventory
 
-We have a working lift-and-shift container path. This document now tracks only:
-- required completed baseline items
-- remaining validation and hardening work
+### Runtime code
+- `KEEP` [src/bot_app.py](src/bot_app.py)
+- `TEMP` [docker-bot/src/simple_ping_bot.py](docker-bot/src/simple_ping_bot.py) — Discord connectivity smoke test only
+- `KEEP` [cogs/reminders.py](cogs/reminders.py) — now supports `REMINDER_FILE` override
+- `KEEP` [cogs/extra_cogs/price_tracker.py](cogs/extra_cogs/price_tracker.py) — now supports `PRICE_TRACKER_DB_FILE` and `PRICE_TRACKER_IMAGE_DIR`
 
-## Completed baseline (required)
+### Container files
+- `PROMOTE` [docker-bot/Dockerfile](docker-bot/Dockerfile) — currently ping default command; usable for full bot by command override
+- `TEMP` [docker-bot/docker-compose.yml](docker-bot/docker-compose.yml) — MVP compose profile
+- `KEEP` [docker-bot/.dockerignore](docker-bot/.dockerignore)
+- `KEEP` [docker-bot/.env.example](docker-bot/.env.example)
 
-- Root-level Docker deployment is in place and running:
-  - [Dockerfile](../Dockerfile)
-  - [docker-compose.yml](../docker-compose.yml)
-  - [.dockerignore](../.dockerignore)
-- Runtime supports Docker-friendly persistence/path overrides where needed:
-  - [cogs/reminders.py](../cogs/reminders.py) (`REMINDER_FILE`)
-  - [cogs/extra_cogs/price_tracker.py](../cogs/extra_cogs/price_tracker.py) (`PRICE_TRACKER_DB_FILE`, `PRICE_TRACKER_IMAGE_DIR`)
-- Main app entrypoint remains the same for local and container runs:
-  - [src/bot_app.py](../src/bot_app.py)
+### Docs
+- `KEEP` [docs/nas-docker-plan.md](docs/nas-docker-plan.md)
+- `TEMP` [docker-bot/README.md](docker-bot/README.md)
 
-## Validation goals (in progress)
+## Exit criteria for removing TEMP files
 
-Migration is considered validated when all items below are complete:
+Remove `TEMP` artifacts only after all are true:
+1. Full bot runs in container for at least 7 days without critical restart loops.
+2. Reminder and price-tracker data persist correctly across restarts.
+3. Discord command and scheduled-task behavior validated on NAS.
+4. Backup/restore of `./data` confirmed.
 
-1. **Stability window**
-	- Run at least 7 continuous days without critical restart loops/crashes.
+## Cleanup plan
 
-2. **Persistence verification**
-	- Confirm reminders and price-tracker data survive container restarts/recreates.
-	- Confirm web room data and logs persist as expected.
+When stable:
+1. Switch compose command to full bot (`python -m src.bot_app`).
+2. Keep `docker-bot/docker-compose.yml` for one more release cycle as rollback.
+3. If no rollback needed, remove:
+   - [docker-bot/src/simple_ping_bot.py](docker-bot/src/simple_ping_bot.py)
+   - [docker-bot/README.md](docker-bot/README.md)
+4. Rename `docker-bot/docker-compose.yml` to a standard production filename.
 
-3. **Feature parity on NAS**
-	- Validate Discord behavior (mentions, replies, conversation mode).
-	- Validate Web behavior (`/health`, UI chat, `/reset`, optional bearer token).
-
-4. **Operational recovery**
-	- Verify backup/restore workflow for `./cogs`, `./logs`, and `./config.yaml`.
-
-## Next steps (priority order)
-
-1. Complete and record 7-day validation observations (uptime + error patterns).
-2. Run a controlled restart/recreate test and capture persistence results.
-3. Run a backup/restore drill and confirm bot resumes normally.
-4. Decide whether to keep single-container `BOTH` mode as default long-term.
-
-## Post-validation hardening backlog
-
-Do after validation passes (not blocking current phase):
-
-- Centralize router/provider wiring to reduce drift risk between startup paths.
-- Replace broad startup/background exception swallowing with summary logging.
-- Add optional fail-fast mode for missing required runtime files in Docker.
-- Keep config documentation aligned with `ConfigService` behavior.
-
-## Operating notes
-
-- Keep writable data on host mounts (`./cogs`, `./logs`) and mount `./config.yaml` writable.
-- Keep secrets outside the image (`.env`/host environment).
-- Prefer env-based storage path overrides over hardcoded write paths.
+## Notes
+- Keep writable data isolated in host-mounted folders (`./data`, `./logs`).
+- Prefer env-based path overrides over hardcoded in-repo write paths.

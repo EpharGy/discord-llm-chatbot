@@ -22,10 +22,7 @@ except ImportError:
     except ImportError:
         ToolBridge = None  # type: ignore
 
-REMINDER_FILE = os.getenv(
-    'REMINDER_FILE',
-    os.path.join(os.path.dirname(__file__), 'reminders.json')
-)
+REMINDER_FILE = os.path.join(os.path.dirname(__file__), 'reminders.json')
 CHECK_INTERVAL = 30  # seconds
 
 TIME_PATTERN = re.compile(r'((?P<days>\d+)d)?((?P<hours>\d+)h)?((?P<minutes>\d+)m)?')
@@ -226,7 +223,11 @@ class RemindersCog(commands.Cog):
                 # Local time presentation for when it was scheduled
                 ra = parse_timestamp(reminder.get('remind_at'))
                 if ra is not None:
-                    scheduled_local = ensure_local(ra).strftime('%Y-%m-%d %H:%M')
+                    scheduled_local_dt = ensure_local(ra)
+                    if scheduled_local_dt is not None:
+                        scheduled_local = scheduled_local_dt.strftime('%Y-%m-%d %H:%M')
+                    else:
+                        scheduled_local = reminder.get('remind_at', '')
                 else:
                     scheduled_local = reminder.get('remind_at', '')
                 details = f"scheduled_at_local={scheduled_local} delivered_late={'true' if offline else 'false'}"
@@ -305,7 +306,11 @@ class RemindersCog(commands.Cog):
             tool = ToolBridge(router)
             human = humanize_timedelta(delta)
             try:
-                local_time = ensure_local(remind_at).strftime('%Y-%m-%d %H:%M')
+                local_time_dt = ensure_local(remind_at)
+                if local_time_dt is not None:
+                    local_time = local_time_dt.strftime('%Y-%m-%d %H:%M')
+                else:
+                    local_time = reminder['remind_at']
             except Exception:
                 local_time = reminder['remind_at']
             summary = f"Set a reminder for <@{interaction.user.id}> in {human}: {message}"
@@ -353,7 +358,11 @@ class RemindersCog(commands.Cog):
         for r in user_reminders:
             at = parse_timestamp(r.get('remind_at'))
             if at is not None:
-                at_local = ensure_local(at).strftime('%Y-%m-%d %H:%M')
+                at_local_dt = ensure_local(at)
+                if at_local_dt is not None:
+                    at_local = at_local_dt.strftime('%Y-%m-%d %H:%M')
+                else:
+                    at_local = r.get('remind_at', '')
             else:
                 at_local = r.get('remind_at', '')
             lines.append(f"ID: {r['id']} | At: {at_local} | Msg: {r['message']}")
