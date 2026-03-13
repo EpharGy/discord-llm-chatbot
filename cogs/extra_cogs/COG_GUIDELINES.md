@@ -14,6 +14,7 @@ Use this when you just need a straightforward command that returns a fixed or co
 Key points:
 
 - Put the file under `cogs/extra_cogs/` (e.g., `ping.py`).
+- Cog filenames ending with `_script.py` are ignored (reserved for one-off/debug scripts).
 - Define a `commands.Cog` subclass and an `async def setup(bot)` that adds the cog.
 - If you’ll deny a request (permissions/validation), don’t defer first—reply immediately and ephemerally.
 - If it’s a normal public reply and you need async work first, `defer(ephemeral=False)` and then `followup.send(...)`.

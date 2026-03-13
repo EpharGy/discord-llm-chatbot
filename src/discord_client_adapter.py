@@ -36,7 +36,7 @@ class DiscordClientAdapter(commands.Bot):
             # Discover python modules in the directory
             for module_info in pkgutil.iter_modules([str(base)]):
                 name = module_info.name
-                if name.startswith("_"):
+                if name.startswith("_") or name.endswith("_script"):
                     continue
                 found_cogs += 1
                 # Use a consistent module name namespace for clarity in logs
