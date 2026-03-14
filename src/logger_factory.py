@@ -66,6 +66,7 @@ def configure_logging(level: Optional[str] = None, tz: Optional[str] = None, fmt
 
     # Always log to console
     handler = logging.StreamHandler()
+    handler.terminator = "\n"
     handler.setLevel(py_level)
     handler.setFormatter(_TzFormatter(pattern, tz=tz, datefmt="%Y-%m-%d %H:%M:%S%z"))
     root.addHandler(handler)
@@ -86,6 +87,7 @@ def configure_logging(level: Optional[str] = None, tz: Optional[str] = None, fmt
                 encoding="utf-8",
                 delay=False,
             )
+            general_file.terminator = "\n"
             general_file.setLevel(py_level)
             general_file.setFormatter(_TzFormatter(pattern, tz=tz, datefmt="%Y-%m-%d %H:%M:%S%z"))
             root.addHandler(general_file)
@@ -108,6 +110,7 @@ def configure_logging(level: Optional[str] = None, tz: Optional[str] = None, fmt
                 encoding="utf-8",
                 delay=False,
             )
+            err_handler.terminator = "\n"
             err_handler.setLevel(logging.ERROR)
             err_handler.setFormatter(_TzFormatter(pattern, tz=tz, datefmt="%Y-%m-%d %H:%M:%S%z"))
             # Guardrail: even if handler levels are adjusted later, keep errors.log to ERROR+
