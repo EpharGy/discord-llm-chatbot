@@ -17,6 +17,7 @@ services:
       WEATHER_CACHE_PATH: /app/cogs/extra_cogs/weather_cache.json
       MPLCONFIGDIR: /app/logs/matplotlib
       XDG_CACHE_HOME: /app/logs/.cache
+    dns: [172.22.0.2, 1.1.1.1]
     restart: unless-stopped
     volumes:
       - ./logs:/app/logs
