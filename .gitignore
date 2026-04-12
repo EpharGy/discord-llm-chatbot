@@ -49,8 +49,7 @@ prompts/*
 
 # cogs
 !cogs/*
-/cogs/extra_cogs/*
-!/cogs/extra_cogs/COG_GUIDELINES.md
+/cogs/extra_cogs/
 /cogs/reminders.json
 
 # web runtime data
