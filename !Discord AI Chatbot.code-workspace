@@ -11,6 +11,12 @@
 				"driver": "SQLite",
 				"name": "price_tracker",
 				"database": "${workspaceFolder:Discord AI Chatbot}/cogs/extra_cogs/price_tracker.db"
+			},
+			{
+				"previewLimit": 50,
+				"driver": "SQLite",
+				"name": "imgen",
+				"database": "${workspaceFolder:Discord AI Chatbot}/cogs/extra_cogs/imgen/image_ratings.db"
 			}
 		]
 	}
