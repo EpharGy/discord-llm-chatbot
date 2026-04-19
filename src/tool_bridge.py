@@ -67,7 +67,10 @@ class ToolBridge:
         tool_msg = {"role": "system", "content": tool_block}
 
         # No history, no template context; single user nudge keeps roles consistent
-        user_msg = {"role": "user", "content": "Return only the final answer now. Do not ask any questions."}
+        user_msg = {
+            "role": "user",
+            "content": "Write the assistant reply for the user now. Output only the reply text and do not ask questions.",
+        }
         messages = [system_msg, tool_msg, user_msg]
 
         # Model selection & generation (reusing router model config)
