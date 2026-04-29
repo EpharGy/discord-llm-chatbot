@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta as _timedelta
 from pathlib import Path
 from datetime import datetime as dt
-import io
 from .task_queue import PendingMention
 import discord
 from .utils.correlation import make_correlation_id
@@ -246,53 +245,56 @@ class MessageRouter:
         return False
 
     def _split_for_discord(self, text: str) -> list[str]:
-        # Split into at most config.max_response_messages parts, respecting discord.message_char_limit
+        # Split into parts that respect discord.message_char_limit.
+        # Non-final chunks end with a continuation suffix, and continued chunks start
+        # with a prefix so readers know to follow the reply thread.
         try:
             from .config_service import ConfigService
             cfg = ConfigService("config.yaml")
             limit = max(1, int(cfg.discord_message_char_limit()))
-            max_parts = max(1, int(cfg.max_response_messages()))
         except Exception:
             limit = 2000
-            max_parts = 2
         if not text or len(text) <= limit:
             return [text]
+
+        continuation_prefix = "(continued) "
+        continuation_suffix = " ..."
+
+        def _cut_at_boundary(s: str, max_core_len: int) -> int:
+            if max_core_len <= 0:
+                return 0
+            if len(s) <= max_core_len:
+                return len(s)
+            idx = max_core_len
+            while idx > 0 and not s[idx - 1].isspace():
+                idx -= 1
+            # If no boundary exists in range (e.g., one very long token), hard cut.
+            return idx if idx > 0 else max_core_len
+
         parts: list[str] = []
-        remaining = text
-        # Reserve room for ellipsis markers when splitting
-        cont_marker = " ....."
-        lead_marker = "..... "
-        # First part: end with cont_marker if more remains
-        for i in range(max_parts):
-            if len(remaining) <= limit:
-                parts.append(remaining)
-                break
-            # pick slice length accounting for continuation markers
-            slice_limit = limit - (len(cont_marker) if i == 0 else 0)
-            if slice_limit <= 0:
-                slice_limit = limit
-            chunk = remaining[:slice_limit]
-            # try to cut on last whitespace
-            cut = chunk.rfind(" ")
-            if cut < int(slice_limit * 0.6):
-                cut = slice_limit  # no good whitespace; hard cut near limit
-            head = remaining[:cut].rstrip()
+        remaining = text.strip()
+        while remaining:
+            prefix = "" if not parts else continuation_prefix
+            room_no_suffix = max(1, limit - len(prefix))
+            cut = _cut_at_boundary(remaining, room_no_suffix)
+            candidate = remaining[:cut].rstrip()
             tail = remaining[cut:].lstrip()
-            if i == 0:
-                parts.append((head + cont_marker)[:limit])
-            else:
-                # Subsequent first chunk should include leading marker, within limit
-                chunk2 = (lead_marker + head)
-                if len(chunk2) > limit:
-                    chunk2 = chunk2[:limit]
-                parts.append(chunk2)
+
+            if tail:
+                room_with_suffix = max(1, limit - len(prefix) - len(continuation_suffix))
+                cut = _cut_at_boundary(remaining, room_with_suffix)
+                candidate = remaining[:cut].rstrip()
+                tail = remaining[cut:].lstrip()
+                if not candidate:
+                    candidate = remaining[:room_with_suffix]
+                    tail = remaining[room_with_suffix:].lstrip()
+
+            chunk = f"{prefix}{candidate}" if candidate else prefix.rstrip()
+            if tail:
+                chunk = f"{chunk}{continuation_suffix}"
+            parts.append(chunk[:limit])
             remaining = tail
-            if i == max_parts - 1 and remaining:
-                # append the rest to last part truncated to limit with leading marker
-                final = (lead_marker + remaining)
-                parts[-1] = final[:limit]
-                remaining = ""
-                break
+
         return parts
 
     async def handle_message(self, message):
@@ -1074,62 +1076,21 @@ class MessageRouter:
                 pass
             reply = f"(placeholder) You said: {event['content'][:200]}"
 
-        # Send reply respecting Discord char limits; if too long even after allowed splits, attach as file
-        try:
-            from .config_service import ConfigService
-            cfg = ConfigService("config.yaml")
-            limit = max(1, int(cfg.discord_message_char_limit()))
-            max_parts = max(1, int(cfg.max_response_messages()))
-        except Exception:
-            limit = 2000
-            max_parts = 2
-        cont_marker = " ....."
-        lead_marker = "..... "
-        max_conveyable = (limit - len(cont_marker)) + max(0, max_parts - 1) * (limit - len(lead_marker))
-
+        # Send reply respecting Discord char limits. If multiple chunks are needed,
+        # each chunk replies to the previous bot message to keep one thread.
         sent = None
-        if isinstance(reply, str) and len(reply) > max_conveyable:
-            # Attach as file to avoid exceeding API limits; include a short notice
-            buf = io.BytesIO(reply.encode("utf-8"))
-            try:
+        parts = self._split_for_discord(reply)
+        for idx, chunk in enumerate(parts):
+            if idx == 0:
                 if decision.get("style") == "reply":
-                    sent = await message.reply(content="(Response too long so has been attached as file.)", file=discord.File(fp=buf, filename="response.txt"))
-                else:
-                    sent = await message.channel.send(content="(Response too long so has been attached as file.)", file=discord.File(fp=buf, filename="response.txt"))
-            except Exception:
-                # Fallback: send only the first chunk with an explicit truncation notice
-                parts = self._split_for_discord(reply)
-                first = parts[0] if parts else ""
-                # Build a '(Response Truncated)' marker while honoring the limit
-                try:
-                    from .config_service import ConfigService
-                    cfg = ConfigService("config.yaml")
-                    limit = max(1, int(cfg.discord_message_char_limit()))
-                except Exception:
-                    limit = 2000
-                cont_marker = " ....."
-                trunc_marker = " ..... (Response Truncated)"
-                if first.endswith(cont_marker):
-                    base = first[: -len(cont_marker)]
-                else:
-                    base = first
-                # Ensure final fits within limit
-                room = limit - len(trunc_marker)
-                if room < 0:
-                    room = 0
-                base = base[:room].rstrip()
-                final_chunk = (base + trunc_marker)[:limit]
-                if decision.get("style") == "reply":
-                    sent = await message.reply(final_chunk)
-                else:
-                    sent = await message.channel.send(final_chunk)
-        else:
-            parts = self._split_for_discord(reply)
-            for idx, chunk in enumerate(parts):
-                if decision.get("style") == "reply" and idx == 0:
                     sent = await message.reply(chunk)
                 else:
                     sent = await message.channel.send(chunk)
+                continue
+            try:
+                sent = await sent.reply(chunk) if sent is not None else await message.channel.send(chunk)
+            except Exception:
+                sent = await message.channel.send(chunk)
 
         # Record assistant message into memory for future context
         skip_cooldown = False

@@ -192,6 +192,25 @@ async def main() -> None:
             await asyncio.sleep(2)
 
     async def process_batches_loop():
+        async def _send_batched_reply(channel_obj, reply_text: str):
+            try:
+                import discord
+                if not isinstance(channel_obj, (discord.TextChannel, discord.Thread, discord.DMChannel)):
+                    return None
+                parts = router._split_for_discord(reply_text)
+                sent = None
+                for idx, chunk in enumerate(parts):
+                    if idx == 0:
+                        sent = await channel_obj.send(chunk)
+                    else:
+                        try:
+                            sent = await sent.reply(chunk) if sent is not None else await channel_obj.send(chunk)
+                        except Exception:
+                            sent = await channel_obj.send(chunk)
+                return sent
+            except Exception:
+                return None
+
         while True:
             batch_interval = 10
             batch_limit = 10
@@ -219,11 +238,7 @@ async def main() -> None:
                             reply = await router.build_batch_reply(cid=ch_id, events=events, channel=channel_obj, allow_outside_window=True)
                             if reply and channel_obj is not None:
                                 try:
-                                    import discord
-                                    if isinstance(channel_obj, (discord.TextChannel, discord.Thread, discord.DMChannel)):
-                                        sent = await channel_obj.send(reply)
-                                    else:
-                                        sent = None
+                                    sent = await _send_batched_reply(channel_obj, reply)
                                     if sent:
                                         memory.record({
                                             "channel_id": ch_id,
@@ -246,11 +261,7 @@ async def main() -> None:
                                 reply = await router.build_batch_reply(cid=ch_id, events=events, channel=channel_obj, allow_outside_window=True)
                                 if reply and channel_obj is not None:
                                     try:
-                                        import discord
-                                        if isinstance(channel_obj, (discord.TextChannel, discord.Thread, discord.DMChannel)):
-                                            sent = await channel_obj.send(reply)
-                                        else:
-                                            sent = None
+                                        sent = await _send_batched_reply(channel_obj, reply)
                                         if sent:
                                             memory.record({
                                                 "channel_id": ch_id,
