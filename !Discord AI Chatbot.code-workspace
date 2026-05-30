@@ -16,7 +16,7 @@
 				"previewLimit": 50,
 				"driver": "SQLite",
 				"name": "imgen",
-				"database": "${workspaceFolder:Discord AI Chatbot}/cogs/extra_cogs/imgen/image_ratings.db"
+				"database": "T:\\discord-llm-bot\\cogs\\extra_cogs\\imgen\\image_ratings.db"
 			}
 		]
 	}
