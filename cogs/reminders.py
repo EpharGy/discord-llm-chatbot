@@ -67,9 +67,13 @@ def load_reminders():
         return []
 
 def save_reminders(reminders):
-    os.makedirs(os.path.dirname(REMINDER_FILE), exist_ok=True)
-    with open(REMINDER_FILE, 'w', encoding='utf-8') as f:
+    # Atomic write: dump to a temp file then replace, so an interrupted write
+    # (e.g. a slow/stalled disk on the NAS) can't corrupt reminders.json.
+    # NOTE: blocking I/O — call via asyncio.to_thread from the event loop.
+    tmp = REMINDER_FILE + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
         json.dump({'reminders': reminders}, f, indent=2)
+    os.replace(tmp, REMINDER_FILE)
 
 def remove_reminder(reminders, reminder_id: int):
     return [r for r in reminders if r.get('id') != reminder_id]
@@ -160,6 +164,12 @@ class RemindersCog(commands.Cog):
                     changed = True
         return changed
 
+    async def _save(self):
+        # Run the blocking file write in a worker thread so it never stalls the
+        # event loop (a synchronous write on a slow NAS volume was blocking the
+        # Discord gateway heartbeat).
+        await asyncio.to_thread(save_reminders, self.reminders)
+
     async def cleanup_stale_reminders(self):
         now = now_local()
         stale = []
@@ -173,12 +183,13 @@ class RemindersCog(commands.Cog):
             await self.deliver_reminder(reminder, offline=True)
             self.reminders = remove_reminder(self.reminders, reminder['id'])
         if stale:
-            save_reminders(self.reminders)
+            await self._save()
 
     @tasks.loop(seconds=CHECK_INTERVAL)
     async def check_reminders(self):
         now = now_local()
         updated_reminders = []
+        changed = False
         for r in self.reminders:
             remind_at = parse_timestamp(r.get('remind_at'))
             if remind_at is None:
@@ -195,10 +206,12 @@ class RemindersCog(commands.Cog):
                 if failed_attempts == 0 or next_retry <= now:
                     delivered = await self.deliver_reminder(r)
                     if delivered:
+                        changed = True
                         continue  # Remove from reminders
                     else:
                         # Schedule next retry in 10 minutes, up to 6 times (1 hour)
                         failed_attempts += 1
+                        changed = True
                         if failed_attempts < 7:
                             r['failed_attempts'] = failed_attempts
                             r['next_retry'] = format_timestamp(now + timedelta(minutes=10))
@@ -209,7 +222,10 @@ class RemindersCog(commands.Cog):
             else:
                 updated_reminders.append(r)
         self.reminders = updated_reminders
-        save_reminders(self.reminders)
+        # Only touch the disk when a reminder was actually delivered, retried, or
+        # dropped — avoids hammering slow storage every CHECK_INTERVAL for nothing.
+        if changed:
+            await self._save()
 
     async def deliver_reminder(self, reminder, offline=False):
         user = self.bot.get_user(reminder['user_id'])
@@ -277,7 +293,7 @@ class RemindersCog(commands.Cog):
         if not delivered:
             # User left or banned, purge their reminders
             self.reminders = purge_user_reminders(self.reminders, reminder['user_id'])
-            save_reminders(self.reminders)
+            await self._save()
         return delivered
 
     @app_commands.command(name="remind", description="Set a reminder. Usage: /remind 1d2h30m Check Nyaa")
@@ -299,7 +315,7 @@ class RemindersCog(commands.Cog):
             'remind_at': format_timestamp(remind_at)
         }
         self.reminders.append(reminder)
-        save_reminders(self.reminders)
+        await self._save()
         # Persona confirmation via ToolBridge
         router = getattr(self.bot, 'router', None)
         if router is not None and ToolBridge is not None:
@@ -396,7 +412,7 @@ class RemindersCog(commands.Cog):
         before = len(self.reminders)
         self.reminders = remove_reminder(self.reminders, int(reminder_id))
         after = len(self.reminders)
-        save_reminders(self.reminders)
+        await self._save()
         router = getattr(self.bot, 'router', None)
         if before == after:
             text = f"No reminder found with ID {reminder_id}."
