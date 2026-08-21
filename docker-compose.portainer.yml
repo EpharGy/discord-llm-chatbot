@@ -1,0 +1,41 @@
+services:
+  discord-bot:
+    image: discord-llm-bot:full
+    command: ["python", "-m", "src.bot_app"]
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_PUBLIC_KEY: ${DISCORD_PUBLIC_KEY:-}
+      BOT_TIMEZONE: ${BOT_TIMEZONE:-Australia/Adelaide}
+      TZ: ${TZ:-Australia/Adelaide}
+      REMINDER_FILE: /app/cogs/reminders.jsonw
+      PRICE_TRACKER_DB_FILE: /app/cogs/extra_cogs/price_tracker.db
+      PRICE_TRACKER_IMAGE_DIR: /app/cogs/extra_cogs/price_tracker_items
+      WEATHER_CACHE_PATH: /app/cogs/extra_cogs/weather_cache.json
+      MPLCONFIGDIR: /app/logs/matplotlib
+      XDG_CACHE_HOME: /app/logs/.cache
+    dns:
+      - 172.22.0.2
+      - 1.1.1.1
+    networks:
+      pihole_net:
+        ipv4_address: 172.22.0.4
+    restart: unless-stopped
+    volumes:
+      - /volume1/docker/discord-llm-bot/logs:/app/logs
+      - /volume1/docker/discord-llm-bot/config.yaml:/app/config.yaml:rw
+      - /volume1/docker/discord-llm-bot/cogs:/app/cogs:rw
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+networks:
+  pihole_net:
+    external: true
+    name: nas-pi_hole_infra_net

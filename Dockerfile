@@ -1,16 +1,20 @@
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-client \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN adduser --disabled-password --gecos "" --uid 10001 appuser
 
 COPY requirements.txt ./
+# curl_cffi ships manylinux wheels with libcurl-impersonate bundled, so the
+# Cloudflare bypass needs no browser and no extra apt packages here.
 RUN pip install --no-cache-dir -r requirements.txt
-RUN python -m playwright install --with-deps chromium
 
 COPY src/ ./src/
 COPY cogs/ ./cogs/
@@ -20,7 +24,6 @@ COPY lore/ ./lore/
 COPY config.example.yaml ./config.example.yaml
 
 RUN chown -R appuser:appuser /app
-RUN chown -R appuser:appuser /ms-playwright
 USER appuser
 
 CMD ["python", "-m", "src.bot_app"]

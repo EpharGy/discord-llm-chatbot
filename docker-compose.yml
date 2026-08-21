@@ -9,6 +9,7 @@ services:
     env_file:
       - .env
     environment:
+      HOME: /app
       BOT_TIMEZONE: ${BOT_TIMEZONE:-}
       TZ: ${TZ:-}
       REMINDER_FILE: /app/cogs/reminders.json
@@ -23,6 +24,7 @@ services:
       - ./logs:/app/logs
       - ./config.yaml:/app/config.yaml:rw
       - ./cogs:/app/cogs:rw
+      - ./secrets/ssh:/app/.ssh:ro
     read_only: true
     tmpfs:
       - /tmp

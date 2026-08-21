@@ -1,6 +1,9 @@
 discord.py>=2.4.0
 httpx>=0.27.0
-curl_cffi>=0.15.0
+# Upper-bounded deliberately: the Cloudflare bypass depends on specific
+# impersonation profiles (chrome131 and older). A release that retires them
+# would empty the rotation pool on an image rebuild. Verified against 0.16.1.
+curl_cffi>=0.15.0,<0.17
 pydantic>=2.8.0
 pyyaml>=6.0.1
 ruamel.yaml>=0.18.6
